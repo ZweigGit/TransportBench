@@ -117,6 +117,5 @@ class MscaleDeepONet(nn.Module):
         b_out = self.output_proj(b)                         # [B, hidden * num_outputs]
         b_out = b_out.view(B, self.num_outputs, self.hidden_dim)  # [B, num_outputs, hidden]
 
-        pred = torch.einsum("bkh, bnh -> bnk", b_out, t)    # [B, num_outputs, N]
-        pred = pred.permute(0, 2, 1)                        # [B, N, num_outputs]
+        pred = torch.einsum("bkh, bnh -> bnk", b_out, t)    # [B, N, num_outputs]
         return pred
