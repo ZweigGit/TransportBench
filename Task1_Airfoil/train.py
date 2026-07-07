@@ -13,13 +13,14 @@ from model_unet import FluidUNet
 from model_vit import VisionTransformer
 from model_ae import AutoEncoder
 from model_pt import PointTransformerONet
+from model_mscale_deeponet import MscaleDeepONet
 # Import custom Dataset
 from data_loader import AirfoilDataset
 
 def get_args():
     parser = argparse.ArgumentParser(description="TransportBench - Task I: Airfoil Flow")
-    parser.add_argument('--model', type=str, required=True, 
-                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt'], 
+    parser.add_argument('--model', type=str, required=True,
+                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet'],
                         help='Choose the baseline model')
     parser.add_argument('--epochs', type=int, default=2500, help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=16, help='Batch size')
@@ -63,7 +64,10 @@ def main():
         model = BoltzmannDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=280, num_outputs=4)
     elif args.model == 'pt':
         model = PointTransformerONet(hidden_dim=256, num_outputs=4)
-    
+    elif args.model == 'mscale_deeponet':
+        model = MscaleDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=192, num_outputs=4,
+                               scales=[1, 2, 4, 8, 16], depth=4, activation='GELU')
+
     model = model.to(device)
     print(f"Model Parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.2f} M")
 

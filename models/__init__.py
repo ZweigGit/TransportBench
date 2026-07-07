@@ -4,6 +4,7 @@ from .unet import FluidUNet
 from .vit import VisionTransformer
 from .autoencoder import AutoEncoder
 from .point_transformer import PointTransformer
+from .mscale_deeponet import MscaleDeepONet
 
 __all__ =[
     "BoltzmannDeepONet",
@@ -11,5 +12,6 @@ __all__ =[
     "FluidUNet",
     "VisionTransformer",
     "AutoEncoder",
-    "PointTransformer"
+    "PointTransformer",
+    "MscaleDeepONet"
 ]

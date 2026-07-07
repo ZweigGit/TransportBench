@@ -13,12 +13,13 @@ from model_unet import FluidUNet
 from model_vit import VisionTransformer
 from model_ae import AutoEncoder
 from model_pt import PointTransformerONet
+from model_mscale_deeponet import MscaleDeepONet
 from data_loader import AirfoilDataset
 
 def get_args():
     parser = argparse.ArgumentParser(description="Evaluation Script for Task I: Airfoil Flow")
-    parser.add_argument('--model', type=str, required=True, 
-                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt'], 
+    parser.add_argument('--model', type=str, required=True,
+                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet'],
                         help='Choose the baseline model to evaluate')
     parser.add_argument('--data_path', type=str, default='data/airfoil_unified_128x128.pt', help='Path to dataset')
     parser.add_argument('--checkpoint', type=str, default='./checkpoints/best_model_{}.pth', help='Path to weights')
@@ -56,7 +57,10 @@ def main():
         model = BoltzmannDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=128, num_outputs=4)
     elif args.model == 'pt':
         model = PointTransformerONet(hidden_dim=256, num_outputs=4)
-    
+    elif args.model == 'mscale_deeponet':
+        model = MscaleDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=192, num_outputs=4,
+                               scales=[1, 2, 4, 8, 16], depth=4, activation='GELU')
+
     model = model.to(device)
     
     # 3. Load model weights
