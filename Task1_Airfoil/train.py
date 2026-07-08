@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 from torch.utils.data import DataLoader, random_split
+from tqdm import tqdm
 
 
 from model_deeponet import BoltzmannDeepONet
@@ -81,7 +82,8 @@ def main():
     history = {'train_loss':[], 'test_loss':[]}
 
     print("Training Started...")
-    for epoch in range(args.epochs):
+    pbar = tqdm(range(args.epochs), desc="Training")
+    for epoch in pbar:
         # --- Train Phase ---
         model.train()
         train_loss_acc = 0.0
@@ -156,8 +158,14 @@ def main():
         else:
             saved_flag = ""
 
-        if (epoch + 1) % 50 == 0:
-            print(f"Epoch [{epoch+1}/{args.epochs}] | Train Loss: {avg_train_loss:.5f} | Test Loss: {avg_test_loss:.5f} | LR: {optimizer.param_groups[0]['lr']:.2e}{saved_flag}")
+        pbar.set_postfix({
+            'train': f'{avg_train_loss:.5f}',
+            'test': f'{avg_test_loss:.5f}',
+            'best': f'{best_test_loss:.5f}',
+            'lr': f'{optimizer.param_groups[0]["lr"]:.2e}',
+        })
+        if saved_flag and (epoch + 1) % 50 == 0:
+            print(f"  [BEST SAVED @ epoch {epoch+1}]")
 
     print(f"Training Complete! Best Test Loss: {best_test_loss:.5f}. Model saved to {save_path}")
     

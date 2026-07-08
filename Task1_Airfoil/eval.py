@@ -73,8 +73,10 @@ def main():
 
     # 4. Calculate evaluation metrics and collect samples for visualization
     total_mae = 0.0
+    total_mse = 0.0
     total_l2_error = 0.0
     criterion_mae = nn.L1Loss(reduction='sum')
+    criterion_mse = nn.MSELoss(reduction='sum')
     
     # Store multiple samples for visualization
     samples_to_plot = []
@@ -115,6 +117,7 @@ def main():
 
             # Calculate Metrics
             total_mae += criterion_mae(pred_masked, y_masked).item()
+            total_mse += criterion_mse(pred_masked, y_masked).item()
             
             # Relative L2 Error
             l2_err = torch.norm(pred_masked - y_masked, p=2) / (torch.norm(y_masked, p=2) + 1e-8)
@@ -145,11 +148,13 @@ def main():
     num_elements = num_samples * np.prod(y_masked.shape[1:]) # Total number of elements
     
     final_mae = total_mae / num_elements
+    final_mse = total_mse / num_elements
     final_rel_l2 = total_l2_error / num_samples
 
     print("-" * 50)
     print(f"Final Results for {args.model.upper()}:")
     print(f"Mean Absolute Error (MAE) : {final_mae:.5f}")
+    print(f"Mean Squared Error (MSE)  : {final_mse:.5f}")
     print(f"Relative L2 Error         : {final_rel_l2:.5f}")
     print("-" * 50)
 
