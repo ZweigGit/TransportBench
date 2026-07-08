@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
+import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, random_split
 from tqdm import tqdm
 
@@ -75,7 +76,7 @@ def main():
     # 4. Define optimizer and loss function (Masked L1 or MSE)
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
-    criterion = nn.L1Loss() # Alternatively, use MSELoss based on reference papers
+    criterion = nn.MSELoss()
 
     # ================= Core: Logic for saving the best model =================
     best_test_loss = float('inf')
@@ -171,6 +172,23 @@ def main():
     
     # Save loss history for visualization plotting
     np.save(os.path.join(args.save_dir, f"history_{args.model}.npy"), history)
+
+    # Save loss curve plot
+    os.makedirs('output', exist_ok=True)
+    fig_path = os.path.join('output', f"loss_curve_{args.model}.png")
+    plt.figure(figsize=(8, 5))
+    plt.plot(history['train_loss'], label='Train', alpha=0.8)
+    plt.plot(history['test_loss'], label='Test', alpha=0.8)
+    plt.yscale('log')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title(f'{args.model.upper()} Loss Curve')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(fig_path, dpi=150)
+    plt.close()
+    print(f"Loss curve saved to {fig_path}")
 
 if __name__ == "__main__":
     main()

@@ -24,7 +24,7 @@ def get_args():
     parser.add_argument('--data_path', type=str, default='data/airfoil_unified_128x128.pt', help='Path to dataset')
     parser.add_argument('--checkpoint', type=str, default='./checkpoints/best_model_{}.pth', help='Path to weights')
     parser.add_argument('--num_samples', type=int, default=3, help='Number of samples to visualize')
-    parser.add_argument('--output_dir', type=str, default='data/output', help='Directory to save visualizations')
+    parser.add_argument('--output_dir', type=str, default='output', help='Directory to save visualizations')
     return parser.parse_args()
 
 def main():
