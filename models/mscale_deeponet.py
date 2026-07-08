@@ -11,6 +11,12 @@ class PhiActivation(nn.Module):
                 - torch.relu(x - 3) ** 2)
 
 
+class SinActivation(nn.Module):
+    """Sine activation for multi-scale frequency processing."""
+    def forward(self, x):
+        return torch.sin(x)
+
+
 class _FNN(nn.Module):
     """Minimal fully-connected net."""
     def __init__(self, dims, act):
@@ -28,10 +34,10 @@ class _FNN(nn.Module):
 
 class _MscaleTrunk(nn.Module):
     """MscaleDNN trunk: parallel frequency-scaled branches fused by a shared FNN.
-    Uses PhiActivation (B-spline of order 3) per Liu et al. 2020."""
+    Uses sine activation for multi-scale frequency processing."""
     def __init__(self, trunk_dim, hidden_dim, scales, depth):
         super().__init__()
-        act = PhiActivation()
+        act = SinActivation()
         n_scales = len(scales)
         self.scales = nn.Parameter(
             torch.tensor(scales, dtype=torch.float32), requires_grad=False
