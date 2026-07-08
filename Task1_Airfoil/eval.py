@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, random_split
 
 # Import models and data loader
-from model import BoltzmannDeepONet
+from model_deeponet import BoltzmannDeepONet
 from model_fno import FNO2d
 from model_unet import FluidUNet
 from model_vit import VisionTransformer
