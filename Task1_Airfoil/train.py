@@ -1,5 +1,6 @@
 import os
 import argparse
+import random
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -34,6 +35,17 @@ def get_args():
 def main():
     args = get_args()
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    # Fix random seeds for reproducibility
+    seed = 42
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    if device == 'cuda':
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
     print(f"Starting Task I Training | Model: {args.model.upper()} | Device: {device}")
 
     # 1. Automatically create directory for saving model weights
@@ -84,7 +96,7 @@ def main():
     elif args.model == 'pt':
         model = PointTransformerONet(hidden_dim=256, num_outputs=4)
     elif args.model == 'mscale_deeponet':
-        model = MscaleDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=195, num_outputs=4,
+        model = MscaleDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=181, num_outputs=4,
                                scales=[1, 2, 4, 8, 16], depth=4, activation='GELU')
 
     model = model.to(device)
