@@ -25,7 +25,7 @@ def get_args():
                         choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet'],
                         help='Choose the baseline model')
     parser.add_argument('--epochs', type=int, default=2500, help='Number of training epochs')
-    parser.add_argument('--batch_size', type=int, default=16, help='Batch size')
+    parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
     parser.add_argument('--data_path', type=str, default='data/airfoil_unified_128x128.pt', help='Path to dataset')
     parser.add_argument('--save_dir', type=str, default='./checkpoints', help='Directory to save models')
@@ -64,7 +64,7 @@ def main():
     elif args.model == 'ae':
         model = AutoEncoder(in_channels=3, out_channels=4, base_dim=24)
     elif args.model == 'deeponet':
-        model = BoltzmannDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=280, num_outputs=4)
+        model = BoltzmannDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=256, num_outputs=4, depth=5)
     elif args.model == 'pt':
         model = PointTransformerONet(hidden_dim=256, num_outputs=4)
     elif args.model == 'mscale_deeponet':
@@ -76,7 +76,8 @@ def main():
 
     # 4. Define optimizer and loss function (Masked L1 or MSE)
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
+    # Paper: no scheduler for Tasks I-III
+    # scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
     criterion = nn.MSELoss()
 
     # ================= Core: Logic for saving the best model =================
@@ -120,7 +121,7 @@ def main():
             optimizer.step()
             train_loss_acc += loss.item()
             
-        scheduler.step()
+        # scheduler.step()
         avg_train_loss = train_loss_acc / len(train_loader)
         history['train_loss'].append(avg_train_loss)
 
