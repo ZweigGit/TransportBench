@@ -37,8 +37,9 @@ def main():
     print(f"Starting Task I Training | Model: {args.model.upper()} | Device: {device}")
 
     # 1. Automatically create directory for saving model weights
+    args.save_dir = os.path.join('output', args.model)
     os.makedirs(args.save_dir, exist_ok=True)
-    save_path = os.path.join(args.save_dir, f"best_model_{args.model}.pth")
+    save_path = os.path.join(args.save_dir, f"best_model.pth")
 
     # 2. Determine Dataset mode based on model architecture (Grid-based vs Coordinate-based)
     # FNO/UNet/ViT/AE require image-like formats [B, 3, H, W]
@@ -67,7 +68,7 @@ def main():
     elif args.model == 'pt':
         model = PointTransformerONet(hidden_dim=256, num_outputs=4)
     elif args.model == 'mscale_deeponet':
-        model = MscaleDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=192, num_outputs=4,
+        model = MscaleDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=195, num_outputs=4,
                                scales=[1, 2, 4, 8, 16], depth=4, activation='GELU')
 
     model = model.to(device)
@@ -171,11 +172,10 @@ def main():
     print(f"Training Complete! Best Test Loss: {best_test_loss:.5f}. Model saved to {save_path}")
     
     # Save loss history for visualization plotting
-    np.save(os.path.join(args.save_dir, f"history_{args.model}.npy"), history)
+    np.save(os.path.join(args.save_dir, 'history.npy'), history)
 
     # Save loss curve plot
-    os.makedirs('output', exist_ok=True)
-    fig_path = os.path.join('output', f"loss_curve_{args.model}.png")
+    fig_path = os.path.join(args.save_dir, 'loss_curve.png')
     plt.figure(figsize=(8, 5))
     plt.plot(history['train_loss'], label='Train', alpha=0.8)
     plt.plot(history['test_loss'], label='Test', alpha=0.8)

@@ -22,9 +22,9 @@ def get_args():
                         choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet'],
                         help='Choose the baseline model to evaluate')
     parser.add_argument('--data_path', type=str, default='data/airfoil_unified_128x128.pt', help='Path to dataset')
-    parser.add_argument('--checkpoint', type=str, default='./checkpoints/best_model_{}.pth', help='Path to weights')
+    parser.add_argument('--checkpoint', type=str, default=None, help='Path to weights (default: output/<model>/best_model.pth)')
     parser.add_argument('--num_samples', type=int, default=3, help='Number of samples to visualize')
-    parser.add_argument('--output_dir', type=str, default='output', help='Directory to save visualizations')
+    parser.add_argument('--output_dir', type=str, default=None, help='Directory to save visualizations (default: output/<model>)')
     return parser.parse_args()
 
 def main():
@@ -33,6 +33,8 @@ def main():
     print(f"Starting Evaluation | Model: {args.model.upper()} | Device: {device}")
     
     # Create output directory
+    if args.output_dir is None:
+        args.output_dir = os.path.join('output', args.model)
     os.makedirs(args.output_dir, exist_ok=True)
 
     # 1. Load test dataset
@@ -58,13 +60,15 @@ def main():
     elif args.model == 'pt':
         model = PointTransformerONet(hidden_dim=256, num_outputs=4)
     elif args.model == 'mscale_deeponet':
-        model = MscaleDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=192, num_outputs=4,
+        model = MscaleDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=195, num_outputs=4,
                                scales=[1, 2, 4, 8, 16], depth=4, activation='GELU')
 
     model = model.to(device)
     
     # 3. Load model weights
-    ckpt_path = args.checkpoint.format(args.model)
+    if args.checkpoint is None:
+        args.checkpoint = os.path.join('output', args.model, 'best_model.pth')
+    ckpt_path = args.checkpoint
     if not os.path.exists(ckpt_path):
         raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
     model.load_state_dict(torch.load(ckpt_path, map_location=device))
@@ -205,7 +209,7 @@ def main():
         plt.suptitle(f"{args.model.upper()} - Sample {sample_idx}", fontsize=16, y=0.995)
         plt.tight_layout()
         
-        save_fig_path = os.path.join(args.output_dir, f"{args.model}_sample_{sample_idx}.png")
+        save_fig_path = os.path.join(args.output_dir, f"sample_{sample_idx}.png")
         plt.savefig(save_fig_path, dpi=200, bbox_inches='tight')
         plt.close()
         print(f"Saved: {save_fig_path}")

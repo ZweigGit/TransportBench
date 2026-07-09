@@ -44,7 +44,7 @@ class _MscaleTrunk(nn.Module):
         )
         branch_dims = [trunk_dim] + [hidden_dim] * (depth - 1) + [hidden_dim]
         self.branches = nn.ModuleList([_FNN(branch_dims, act) for _ in range(n_scales)])
-        fusion_dims = [n_scales * hidden_dim, hidden_dim, hidden_dim]
+        fusion_dims = [n_scales * hidden_dim, hidden_dim]
         self.fusion = _FNN(fusion_dims, act)
 
     def forward(self, x):
