@@ -41,13 +41,15 @@ class HyperDeepONet(nn.Module):
         activation:   'Tanh' or 'GELU'.
     """
     def __init__(self, branch_dim, trunk_dim, hidden_dim=46, num_outputs=4,
-                 trunk_depth=3, branch_depth=3, activation='Tanh'):
+                 trunk_depth=3, branch_depth=3, activation='GELU'):
         super().__init__()
 
         if activation == 'Tanh':
             act = nn.Tanh
+            self._trunk_act = torch.tanh
         elif activation == 'GELU':
             act = nn.GELU
+            self._trunk_act = nn.functional.gelu
         else:
             raise ValueError(f"Unsupported activation: {activation}")
 
@@ -95,7 +97,7 @@ class HyperDeepONet(nn.Module):
             start += d_out
 
             y = torch.einsum("bij,bgj->bgi", weight, y) + bias  # [B, N, d_out]
-            y = torch.tanh(y)
+            y = self._trunk_act(y)
 
         # Last layer: no activation
         d_in, d_out = self.trunk_dims[-2], self.trunk_dims[-1]
