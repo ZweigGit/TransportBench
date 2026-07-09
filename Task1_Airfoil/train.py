@@ -50,7 +50,23 @@ def main():
     train_size = int(0.8 * len(dataset))
     test_size = len(dataset) - train_size
     train_data, test_data = random_split(dataset, [train_size, test_size], generator=torch.Generator().manual_seed(42))
-    
+
+    # For coordinate-based models, wrap subsets to expose original indices for mask lookup
+    if data_mode != 'fno':
+        mask_source = AirfoilDataset(args.data_path, mode='fno')
+        class _IndexedSubset:
+            """Wraps a Subset to return (subset_idx, *data) so we can look up geometry masks."""
+            def __init__(self, subset):
+                self.subset = subset
+                self.indices = subset.indices
+                self.dataset = subset.dataset
+            def __getitem__(self, idx):
+                return idx, *self.subset[idx]
+            def __len__(self):
+                return len(self.subset)
+        train_data = _IndexedSubset(train_data)
+        test_data = _IndexedSubset(test_data)
+
     train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
     test_loader = DataLoader(test_data, batch_size=args.batch_size, shuffle=False)
 
@@ -100,23 +116,29 @@ def main():
                 loss = criterion(pred * mask, y * mask)
             else:
                 # Coordinate-based models (DeepONet, PT)
-                x_branch, x_trunk, y = batch[0].to(device), batch[1].to(device), batch[2].to(device)
-                # x_branch: [Batch, 674]
-                # x_trunk: [Batch, 16384, 2]
-                # y: [Batch, 16384, 4]
-                
+                batch_indices, x_branch, x_trunk, y = batch
+                x_branch = x_branch.to(device)
+                x_trunk = x_trunk.to(device)
+                y = y.to(device)
+
                 batch_size = x_branch.shape[0]
-                n_points = x_trunk.shape[1]
-                
-                # Process each sample individually (handling DeepONet trunk batching limitations)
+
+                # Forward: each sample individually (DeepONet trunk batching limitation)
                 pred_list = []
                 for i in range(batch_size):
                     pred_i = model(x_branch[i:i+1], x_trunk[i])  # [1, N_points, 4]
                     pred_list.append(pred_i)
                 pred = torch.cat(pred_list, dim=0)  # [Batch, N_points, 4]
-                
-                # Compute loss
-                loss = criterion(pred, y)
+
+                # Build geometry mask for the batch
+                masks = []
+                for i in range(batch_size):
+                    orig_idx = train_data.indices[batch_indices[i].item()]
+                    masks.append(mask_source.geo_mask[orig_idx].reshape(-1, 1))  # [16384, 1]
+                mask = torch.stack(masks, dim=0).to(device)  # [B, 16384, 1]
+
+                # Masked MSE (paper Eq. 14): exclude solid interior points
+                loss = criterion(pred * mask, y * mask)
             loss.backward()
             optimizer.step()
             train_loss_acc += loss.item()
@@ -136,17 +158,28 @@ def main():
                     mask = x[:, 0:1, :, :]
                     loss = criterion(pred * mask, y * mask)
                 else:
-                    x_branch, x_trunk, y = batch[0].to(device), batch[1].to(device), batch[2].to(device)
+                    batch_indices, x_branch, x_trunk, y = batch
+                    x_branch = x_branch.to(device)
+                    x_trunk = x_trunk.to(device)
+                    y = y.to(device)
+
                     batch_size = x_branch.shape[0]
-                    
-                    # Process each sample individually
+
+                    # Forward
                     pred_list = []
                     for i in range(batch_size):
                         pred_i = model(x_branch[i:i+1], x_trunk[i])
                         pred_list.append(pred_i)
                     pred = torch.cat(pred_list, dim=0)
-                    
-                    loss = criterion(pred, y)
+
+                    # Build geometry mask for the batch
+                    masks = []
+                    for i in range(batch_size):
+                        orig_idx = test_data.indices[batch_indices[i].item()]
+                        masks.append(mask_source.geo_mask[orig_idx].reshape(-1, 1))
+                    mask = torch.stack(masks, dim=0).to(device)
+
+                    loss = criterion(pred * mask, y * mask)
                     
                 test_loss_acc += loss.item()
                 
