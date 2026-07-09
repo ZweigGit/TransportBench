@@ -14,12 +14,13 @@ from model_vit import VisionTransformer
 from model_ae import AutoEncoder
 from model_pt import PointTransformerONet
 from model_mscale_deeponet import MscaleDeepONet
+from model_hyperdeeponet import HyperDeepONet
 from data_loader import AirfoilDataset
 
 def get_args():
     parser = argparse.ArgumentParser(description="Evaluation Script for Task I: Airfoil Flow")
     parser.add_argument('--model', type=str, required=True,
-                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet'],
+                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet'],
                         help='Choose the baseline model to evaluate')
     parser.add_argument('--data_path', type=str, default='data/airfoil_unified_128x128.pt', help='Path to dataset')
     parser.add_argument('--checkpoint', type=str, default=None, help='Path to weights (default: output/<model>/best_model.pth)')
@@ -62,6 +63,9 @@ def main():
     elif args.model == 'mscale_deeponet':
         model = MscaleDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=195, num_outputs=4,
                                scales=[1, 2, 4, 8, 16], depth=4, activation='GELU')
+    elif args.model == 'hyperdeeponet':
+        model = HyperDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=46, num_outputs=4,
+                              trunk_depth=3, branch_depth=3, activation='Tanh')
 
     model = model.to(device)
     
