@@ -34,10 +34,10 @@ class _FNN(nn.Module):
 
 class _MscaleTrunk(nn.Module):
     """MscaleDNN trunk: parallel frequency-scaled branches fused by a shared FNN.
-    Uses sine activation for multi-scale frequency processing."""
+    Uses Phi (B-spline) activation for multi-scale frequency processing."""
     def __init__(self, trunk_dim, hidden_dim, scales, depth):
         super().__init__()
-        act = SinActivation()
+        act = PhiActivation()
         n_scales = len(scales)
         self.scales = nn.Parameter(
             torch.tensor(scales, dtype=torch.float32), requires_grad=False
