@@ -61,7 +61,7 @@ def main():
     elif args.model == 'pt':
         model = PointTransformerONet(hidden_dim=256, num_outputs=4)
     elif args.model == 'mscale_deeponet':
-        model = MscaleDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=195, num_outputs=4,
+        model = MscaleDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=181, num_outputs=4,
                                scales=[1, 2, 4, 8, 16], depth=4, activation='GELU')
     elif args.model == 'hyperdeeponet':
         model = HyperDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=46, num_outputs=4,
