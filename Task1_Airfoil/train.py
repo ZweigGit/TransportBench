@@ -100,7 +100,7 @@ def main():
         model = MscaleDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=181, num_outputs=4,
                                scales=[1, 2, 4, 8, 16], depth=4, activation='GELU')
     elif args.model == 'hyperdeeponet':
-        model = HyperDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=46, num_outputs=4,
+        model = HyperDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=76, num_outputs=4,
                               trunk_depth=3, branch_depth=3, activation='GELU')
 
     model = model.to(device)
