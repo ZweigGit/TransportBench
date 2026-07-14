@@ -3,7 +3,6 @@ HyperDeepONet: DeepONet with a hypernetwork trunk.
 
 Key ideas:
 - Branch net outputs ARE the trunk net's weights/biases (hypernetwork).
-- Multiple branch subnets (one per output variable) fuse via element-wise product.
 - No learned parameters in the trunk — all trunk params come from the branch output.
 
 Reference: Lee & Shin, "HyperDeepONet: a hypernetwork-based deep operator learning framework"
@@ -61,21 +60,15 @@ class HyperDeepONet(nn.Module):
         for i in range(len(self.trunk_dims) - 1):
             t_para += self.trunk_dims[i] * self.trunk_dims[i + 1] + self.trunk_dims[i + 1]
 
-        # Branch: num_outputs sub-networks -> element-wise product -> t_para
+        # Branch: single network -> t_para (trunk weights/biases)
         branch_dims = [branch_dim] + [hidden_dim] * branch_depth + [t_para]
-
-        self.branch_subnets = nn.ModuleList([
-            _MLP(branch_dims, act) for _ in range(num_outputs)
-        ])
+        self.branch_net = _MLP(branch_dims, act)
 
         self.num_outputs = num_outputs
 
     def _branch_forward(self, x):
-        """Run each branch subnet on x, fuse with element-wise product."""
-        out = self.branch_subnets[0](x)
-        for subnet in self.branch_subnets[1:]:
-            out = out * subnet(x)
-        return out  # [B, t_para]
+        """Run branch net on x -> trunk parameters."""
+        return self.branch_net(x)  # [B, t_para]
 
     def _trunk_forward(self, params, x_trunk):
         """Hypernetwork trunk: params -> weights/biases -> forward pass."""
