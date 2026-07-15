@@ -19,3 +19,5 @@ papers/
 
 *.pth
 *.npy
+
+analysis/

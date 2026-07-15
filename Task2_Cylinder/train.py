@@ -17,12 +17,13 @@ from model_ae import Autoencoder
 from model_pt import PointTransformer
 from model_mscale_deeponet import MscaleDeepONet
 from model_hyperdeeponet import HyperDeepONet
+from model_hyper_mscale_deeponet import HyperMscaleDeepONet
 from data_loader import CylinderDataset
 
 def get_args():
     parser = argparse.ArgumentParser(description="TransportBench - Task II: Cylinder Flow")
     parser.add_argument('--model', type=str, required=True,
-                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet'],
+                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'hyper_mscale_deeponet'],
                         help='Choose the baseline model')
     parser.add_argument('--epochs', type=int, default=2500, help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=16, help='Batch size')
@@ -82,6 +83,9 @@ def main():
     elif args.model == 'hyperdeeponet':
         model = HyperDeepONet(branch_dim=2, trunk_dim=2, hidden_dim=78, num_outputs=4,
                               trunk_depth=3, branch_depth=3, activation='GELU')
+    elif args.model == 'hyper_mscale_deeponet':
+        model = HyperMscaleDeepONet(branch_dim=2, trunk_dim=2, hidden_dim=36, num_outputs=4,
+                                    num_scales=5, depth=4, activation='GELU')
 
     model = model.to(device)
     print(f"Model Parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.2f} M")
