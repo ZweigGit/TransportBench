@@ -44,21 +44,21 @@ class _MLP(nn.Module):
 class HyperMscaleDeepONet(nn.Module):
     """HyperDeepONet with MscaleDNN trunk — branch net outputs all trunk parameters.
 
+    The branch net also outputs learnable log-scale factors (s_p = exp(log_s)) for
+    the Mscale trunk, so scale factors adapt to sensor inputs.
+
     Args:
         branch_dim:   Input dimension of the branch net (sensor values).
         trunk_dim:    Input dimension of the trunk net (coordinates).
         hidden_dim:   Width of hidden layers.
         num_outputs:  Number of output channels.
-        scales:       Frequency scaling factors for MscaleDNN trunk.
+        num_scales:   Number of learnable scale factors (default 5).
         depth:        Number of hidden layers in per-scale trunk FNNs and in branch net.
-        activation:   'GELU' or 'Tanh' (branch activation; trunk always uses sin).
+        activation:   'GELU' or 'Tanh' (branch activation; trunk always uses B-spline).
     """
     def __init__(self, branch_dim, trunk_dim, hidden_dim=256, num_outputs=4,
-                 scales=None, depth=4, activation='GELU'):
+                 num_scales=5, depth=4, activation='GELU'):
         super().__init__()
-
-        if scales is None:
-            scales = [1.0, 2.0, 4.0, 8.0, 16.0]
 
         if activation == 'GELU':
             act = nn.GELU()
@@ -67,10 +67,7 @@ class HyperMscaleDeepONet(nn.Module):
         else:
             raise ValueError(f"Unsupported activation: {activation}")
 
-        n_scales = len(scales)
-        self.scales = nn.Parameter(
-            torch.tensor(scales, dtype=torch.float32), requires_grad=False
-        )
+        n_scales = num_scales
         self.num_outputs = num_outputs
 
         # --- Compute total parameters needed to construct the hyper-trunk ---
@@ -86,7 +83,7 @@ class HyperMscaleDeepONet(nn.Module):
         output_dims = [hidden_dim, num_outputs]
         output_params = _compute_weight_bias(output_dims)
 
-        t_para = n_scales * per_branch_params + fusion_params + output_params
+        t_para = n_scales * per_branch_params + fusion_params + output_params + n_scales  # +n_scales for log_scales
 
         # --- Branch net ---
         self.branch_net = _MLP([branch_dim] + [hidden_dim] * depth + [t_para], act)
@@ -125,13 +122,17 @@ class HyperMscaleDeepONet(nn.Module):
         B = params.shape[0]
         _, N, _ = x_trunk.shape
 
+        # --- Extract log-scales from end of params ---
+        log_scales = params[:, -self._n_scales:]  # [B, n_scales]
+        scales = torch.exp(log_scales)             # [B, n_scales], >0 guaranteed
+
         # --- Per-scale branches ---
         d_in0, d_out0 = self._branch_dims[0], self._branch_dims[1]
         branch_out = []
         start = 0
 
         for s_idx in range(self._n_scales):
-            scale = self.scales[s_idx]
+            scale = scales[:, s_idx].view(-1, 1, 1)  # [B, 1, 1]
             y = scale * x_trunk  # [B_or_1, N, trunk_dim]
 
             # First layer: trunk_dim -> hidden_dim

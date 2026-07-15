@@ -69,7 +69,7 @@ def main():
                               trunk_depth=3, branch_depth=3, activation='GELU')
     elif args.model == 'hyper_mscale_deeponet':
         model = HyperMscaleDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=36, num_outputs=4,
-                                    scales=[1, 2, 4, 8, 16], depth=4, activation='GELU')
+                                    num_scales=5, depth=4, activation='GELU')
 
     model = model.to(device)
     
