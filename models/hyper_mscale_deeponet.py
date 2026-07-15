@@ -10,6 +10,14 @@ import torch
 import torch.nn as nn
 
 
+def _phi(x):
+    """B-spline of order 3, compact support on [0, 3]."""
+    return (torch.relu(x) ** 2
+            - 3 * torch.relu(x - 1) ** 2
+            + 3 * torch.relu(x - 2) ** 2
+            - torch.relu(x - 3) ** 2)
+
+
 def _compute_weight_bias(dims):
     """Total parameter count for a linear stack of given dims (weights + biases)."""
     total = 0
@@ -128,20 +136,20 @@ class HyperMscaleDeepONet(nn.Module):
 
             # First layer: trunk_dim -> hidden_dim
             y, start = self._apply_layer(params, y, d_in0, d_out0, start,
-                                         act_fn=torch.sin)
+                                         act_fn=_phi)
             # Remaining layers: hidden_dim -> hidden_dim
             for i in range(1, len(self._branch_dims) - 1):
                 d_in = self._branch_dims[i]
                 d_out = self._branch_dims[i + 1]
                 y, start = self._apply_layer(params, y, d_in, d_out, start,
-                                             act_fn=torch.sin)
+                                             act_fn=_phi)
             branch_out.append(y)  # [B, N, hidden_dim]
 
         # --- Fusion ---
         y = torch.cat(branch_out, dim=-1)  # [B, N, n_scales * hidden_dim]
         d_fin, d_fout = self._fusion_dims[0], self._fusion_dims[1]
         y, start = self._apply_layer(params, y, d_fin, d_fout, start,
-                                     act_fn=torch.sin)
+                                     act_fn=_phi)
 
         # --- Output layer (no activation) ---
         d_oin, d_oout = self._output_dims[0], self._output_dims[1]
