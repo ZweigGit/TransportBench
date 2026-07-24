@@ -1,9 +1,9 @@
 """
-HyperMscaleDeepONet: HyperDeepONet idea applied to MscaleDeepONet.
+HyperMscaleDeepONet: HyperDeepONet with a single-scale trunk.
 
-Branch net learns ALL parameters of the MscaleTrunk (including per-scale branch
-FNNs, fusion FNN weights/biases, and output projection). No learned parameters
-in the trunk — every weight and bias comes from the branch output at runtime.
+Branch net outputs all trunk parameters (a single FNN + output projection)
+plus one learnable log-scale factor. No learned parameters in the trunk —
+every weight, bias, and the scale comes from the branch output at runtime.
 """
 
 import torch
@@ -42,22 +42,21 @@ class _MLP(nn.Module):
 
 
 class HyperMscaleDeepONet(nn.Module):
-    """HyperDeepONet with MscaleDNN trunk — branch net outputs all trunk parameters.
+    """HyperDeepONet with a single-scale trunk — branch net outputs all trunk parameters.
 
-    The branch net also outputs learnable log-scale factors (s_p = exp(log_s)) for
-    the Mscale trunk, so scale factors adapt to sensor inputs.
+    Branch net outputs one trunk FNN (weights + biases), one output projection,
+    and one learnable log-scale factor. No learned parameters in the trunk.
 
     Args:
         branch_dim:   Input dimension of the branch net (sensor values).
         trunk_dim:    Input dimension of the trunk net (coordinates).
         hidden_dim:   Width of hidden layers.
         num_outputs:  Number of output channels.
-        num_scales:   Number of learnable scale factors (default 5).
-        depth:        Number of hidden layers in per-scale trunk FNNs and in branch net.
+        depth:        Number of hidden layers in trunk FNN and branch net.
         activation:   'GELU' or 'Tanh' (branch activation; trunk always uses B-spline).
     """
     def __init__(self, branch_dim, trunk_dim, hidden_dim=256, num_outputs=4,
-                 num_scales=5, depth=4, activation='GELU'):
+                 depth=4, activation='GELU'):
         super().__init__()
 
         if activation == 'GELU':
@@ -67,35 +66,25 @@ class HyperMscaleDeepONet(nn.Module):
         else:
             raise ValueError(f"Unsupported activation: {activation}")
 
-        n_scales = num_scales
         self.num_outputs = num_outputs
 
         # --- Compute total parameters needed to construct the hyper-trunk ---
-        # Each scale branch: [trunk_dim] + [hidden_dim] * depth  -> depth+1 dims, depth layers
-        branch_dims = [trunk_dim] + [hidden_dim] * depth
-        per_branch_params = _compute_weight_bias(branch_dims)
-
-        # Fusion FNN: [n_scales * hidden_dim] -> [hidden_dim]  (single linear layer)
-        fusion_dims = [n_scales * hidden_dim, hidden_dim]
-        fusion_params = _compute_weight_bias(fusion_dims)
+        # Trunk FNN: [trunk_dim] + [hidden_dim] * depth
+        trunk_dims = [trunk_dim] + [hidden_dim] * depth
+        trunk_params = _compute_weight_bias(trunk_dims)
 
         # Output layer: hidden_dim -> num_outputs
         output_dims = [hidden_dim, num_outputs]
         output_params = _compute_weight_bias(output_dims)
 
-        t_para = n_scales * per_branch_params + fusion_params + output_params + n_scales  # +n_scales for log_scales
+        t_para = trunk_params + output_params + 1  # +1 for log_scale
 
         # --- Branch net ---
         self.branch_net = _MLP([branch_dim] + [hidden_dim] * depth + [t_para], act)
 
         # --- Stash shapes for trunk forward ---
-        self._branch_dims = branch_dims
-        self._fusion_dims = fusion_dims
+        self._trunk_dims = trunk_dims
         self._output_dims = output_dims
-        self._n_scales = n_scales
-        self._per_branch_params = per_branch_params
-        self._fusion_params = fusion_params
-        self._output_params = output_params
 
     @staticmethod
     def _apply_layer(params, x, d_in, d_out, start, act_fn=None):
@@ -112,45 +101,29 @@ class HyperMscaleDeepONet(nn.Module):
         return y, start
 
     def _trunk_forward(self, params, x_trunk):
-        """Hypernetwork MscaleTrunk forward using branch-provided weights/biases.
+        """Hypernetwork trunk forward using branch-provided weights/biases.
 
-        params: [B, t_para] — flattened trunk weights & biases
-        x_trunk: [1, N, trunk_dim] or [B, N, trunk_dim]
+        params: [B, t_para] — flattened trunk weights, biases, and log_scale
+        x_trunk: [N, trunk_dim] or [B, N, trunk_dim]
         """
         if x_trunk.dim() == 2:
             x_trunk = x_trunk.unsqueeze(0)  # [1, N, trunk_dim]
         B = params.shape[0]
-        _, N, _ = x_trunk.shape
 
-        # --- Extract log-scales from end of params ---
-        log_scales = params[:, -self._n_scales:]  # [B, n_scales]
-        scales = torch.exp(log_scales)             # [B, n_scales], >0 guaranteed
+        # --- Extract log_scale from end of params ---
+        log_scale = params[:, -1:]  # [B, 1]
+        scale = torch.exp(log_scale)  # [B, 1], >0 guaranteed
 
-        # --- Per-scale branches ---
-        d_in0, d_out0 = self._branch_dims[0], self._branch_dims[1]
-        branch_out = []
+        # Apply scale to input coordinates
+        y = scale.view(B, 1, 1) * x_trunk  # [B, N, trunk_dim]
+
+        # --- Trunk FNN ---
         start = 0
-
-        for s_idx in range(self._n_scales):
-            scale = scales[:, s_idx].view(-1, 1, 1)  # [B, 1, 1]
-            y = scale * x_trunk  # [B_or_1, N, trunk_dim]
-
-            # First layer: trunk_dim -> hidden_dim
-            y, start = self._apply_layer(params, y, d_in0, d_out0, start,
+        for i in range(len(self._trunk_dims) - 1):
+            d_in = self._trunk_dims[i]
+            d_out = self._trunk_dims[i + 1]
+            y, start = self._apply_layer(params, y, d_in, d_out, start,
                                          act_fn=_phi)
-            # Remaining layers: hidden_dim -> hidden_dim
-            for i in range(1, len(self._branch_dims) - 1):
-                d_in = self._branch_dims[i]
-                d_out = self._branch_dims[i + 1]
-                y, start = self._apply_layer(params, y, d_in, d_out, start,
-                                             act_fn=_phi)
-            branch_out.append(y)  # [B, N, hidden_dim]
-
-        # --- Fusion ---
-        y = torch.cat(branch_out, dim=-1)  # [B, N, n_scales * hidden_dim]
-        d_fin, d_fout = self._fusion_dims[0], self._fusion_dims[1]
-        y, start = self._apply_layer(params, y, d_fin, d_fout, start,
-                                     act_fn=_phi)
 
         # --- Output layer (no activation) ---
         d_oin, d_oout = self._output_dims[0], self._output_dims[1]
