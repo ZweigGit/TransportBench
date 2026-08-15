@@ -6,6 +6,9 @@ from .autoencoder import AutoEncoder
 from .point_transformer import PointTransformer
 from .mscale_deeponet import MscaleDeepONet
 from .hyperdeeponet import HyperDeepONet
+from .c_hyperdeeponet import c_HyperDeepONet
+from .hyper_mscale_deeponet import HyperMscaleDeepONet
+from .fusion_deeponet import Fusion_DeepONet
 
 __all__ =[
     "BoltzmannDeepONet",
@@ -15,5 +18,8 @@ __all__ =[
     "AutoEncoder",
     "PointTransformer",
     "MscaleDeepONet",
-    "HyperDeepONet"
+    "HyperDeepONet",
+    "c_HyperDeepONet",
+    "HyperMscaleDeepONet",
+    "Fusion_DeepONet"
 ]

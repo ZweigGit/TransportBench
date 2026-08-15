@@ -1,12 +1,16 @@
 """
-HyperDeepONet: DeepONet with a hypernetwork trunk.
+c_HyperDeepONet: HyperDeepONet with a chunked branch hypernetwork.
 
 Key ideas:
 - Branch net outputs ARE the trunk net's weights/biases (hypernetwork).
 - No learned parameters in the trunk — all trunk params come from the branch output.
+- The branch net is shared across chunks: a learnable per-chunk embedding z_k
+  conditions one branch call per chunk, whose output covers chunk_out trunk params.
 
 Reference: Lee & Shin, "HyperDeepONet: a hypernetwork-based deep operator learning framework"
 """
+
+import math
 
 import torch
 import torch.nn as nn
@@ -27,20 +31,29 @@ class _MLP(nn.Module):
         return self.net(x)
 
 
-class HyperDeepONet(nn.Module):
-    """HyperDeepONet for operator learning.
+class c_HyperDeepONet(nn.Module):
+    """Chunked-hypernetwork DeepONet for operator learning.
+
+    The trunk parameter vector is split into num_chunks chunks of chunk_out
+    values each. A single shared branch MLP is invoked once per chunk, taking
+    [x_branch, z_k] where z_k is a learnable chunk embedding of dim chunk_in.
+    Outputs are concatenated and truncated to param_size trunk parameters.
 
     Args:
         branch_dim:   Input dimension of the branch net (sensor values).
         trunk_dim:    Input dimension of the trunk net (coordinates).
         hidden_dim:   Width of hidden layers in both branch and trunk.
+        num_basis:    Width of the trunk's penultimate (basis) layer.
         num_outputs:  Number of output channels.
         trunk_depth:  Number of hidden layers in the hypernetwork trunk.
-        branch_depth: Number of hidden layers in each branch subnet.
+        branch_depth: Number of hidden layers in the branch net.
         activation:   'Tanh' or 'GELU'.
+        chunk_in:     Dimension of each learnable chunk embedding.
+        chunk_out:    Trunk parameters generated per branch call.
     """
-    def __init__(self, branch_dim, trunk_dim, hidden_dim=46, num_outputs=4,
-                 trunk_depth=3, branch_depth=3, activation='GELU'):
+    def __init__(self, branch_dim, trunk_dim, hidden_dim=46, num_basis=100,
+                 num_outputs=4, trunk_depth=3, branch_depth=3,
+                 activation='GELU', chunk_in=100, chunk_out=100):
         super().__init__()
 
         if activation == 'Tanh':
@@ -52,23 +65,29 @@ class HyperDeepONet(nn.Module):
         else:
             raise ValueError(f"Unsupported activation: {activation}")
 
-        # Trunk architecture: [trunk_dim, hidden, ..., hidden, num_outputs]
-        self.trunk_dims = [trunk_dim] + [hidden_dim] * trunk_depth + [num_outputs]
+        # Trunk architecture: [trunk_dim, hidden, ..., hidden, num_basis, num_outputs]
+        self.trunk_dims = [trunk_dim] + [hidden_dim] * trunk_depth + [num_basis, num_outputs]
 
         # Total parameters needed to construct the trunk net
         t_para = 0
         for i in range(len(self.trunk_dims) - 1):
             t_para += self.trunk_dims[i] * self.trunk_dims[i + 1] + self.trunk_dims[i + 1]
 
-        # Branch: single network -> t_para (trunk weights/biases)
-        branch_dims = [branch_dim] + [hidden_dim] * branch_depth + [t_para]
+        # Chunking: num_chunks branch calls, each conditioned on a learnable embedding
+        self.param_size = t_para
+        self.chunk_in = chunk_in
+        self.chunk_out = chunk_out
+        self.num_chunks = math.ceil(self.param_size / chunk_out)
+
+        self.latent_chunk = nn.Parameter(torch.randn(self.num_chunks, chunk_in))
+
+        # Branch: shared network -> one chunk of trunk weights/biases per call
+        branch_dims = [branch_dim + chunk_in] + [hidden_dim] * branch_depth + [chunk_out]
         self.branch_net = _MLP(branch_dims, act)
 
-        self.num_outputs = num_outputs
-
     def _branch_forward(self, x):
-        """Run branch net on x -> trunk parameters."""
-        return self.branch_net(x)  # [B, t_para]
+        """Run branch net on x -> chunk of trunk parameters."""
+        return self.branch_net(x)  # [B, K, chunk_out]
 
     def _trunk_forward(self, params, x_trunk):
         """Hypernetwork trunk: params -> weights/biases -> forward pass."""
@@ -111,5 +130,17 @@ class HyperDeepONet(nn.Module):
         Returns:
             [Batch, N_points, num_outputs]
         """
-        params = self._branch_forward(x_branch)  # [B, t_para]
+        B = x_branch.shape[0]
+        K = self.num_chunks
+
+        x_branch = x_branch.unsqueeze(1).repeat(1, K, 1)  # [B, K, branch_dim]
+        z = self.latent_chunk.unsqueeze(0).expand(B, -1, -1)  # [B, K, chunk_in]
+
+        hyper_input = torch.cat([x_branch, z], dim=-1)  # [B, K, branch_dim + chunk_in]
+
+        params = self._branch_forward(hyper_input)  # [B, K, chunk_out]
+
+        params = params.reshape(B, -1)  # [B, K * chunk_out]
+        params = params[:, :self.param_size]  # [B, param_size]
+
         return self._trunk_forward(params, x_trunk)
