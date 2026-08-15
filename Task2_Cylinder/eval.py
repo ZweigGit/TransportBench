@@ -16,12 +16,13 @@ from model_pt import PointTransformer
 from model_mscale_deeponet import MscaleDeepONet
 from model_hyperdeeponet import HyperDeepONet
 from model_hyper_mscale_deeponet import HyperMscaleDeepONet
+from model_fusion_deeponet import Fusion_DeepONet
 from data_loader import CylinderDataset
 
 def get_args():
     parser = argparse.ArgumentParser(description="Evaluation Script for Task II: Cylinder Flow")
     parser.add_argument('--model', type=str, required=True,
-                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'hyper_mscale_deeponet'],
+                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'hyper_mscale_deeponet', 'fusion_deeponet'],
                         help='Choose the baseline model to evaluate')
     parser.add_argument('--data_path', type=str, default='./data/cylinder_full_2400.pt', help='Path to dataset')
     parser.add_argument('--checkpoint', type=str, default=None, help='Path to weights (default: output/<model>/best_model.pth)')
@@ -69,6 +70,10 @@ def main():
     elif args.model == 'hyper_mscale_deeponet':
         model = HyperMscaleDeepONet(branch_dim=2, trunk_dim=2, hidden_dim=68, num_outputs=4,
                                     depth=4, activation='GELU')
+    elif args.model == 'fusion_deeponet':
+        # 1,010,034 params (~1.01M budget), branch [2,278,...,278,1112], trunk [2,278,...,278,278]
+        model = Fusion_DeepONet(branch_dim=2, trunk_dim=2, hidden_dim=278, num_outputs=4,
+                                depth=5, activation='GELU')
 
     model = model.to(device)
 
