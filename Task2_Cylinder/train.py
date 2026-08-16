@@ -162,15 +162,15 @@ def main():
             saved_flag = False
 
         pbar.set_postfix({
-            'train': f'{avg_train_loss:.5f}',
-            'test': f'{avg_test_loss:.5f}',
-            'best': f'{best_test_loss:.5f}',
+            'train': f'{avg_train_loss:.4g}',
+            'test': f'{avg_test_loss:.4g}',
+            'best': f'{best_test_loss:.4g}',
             'lr': f'{optimizer.param_groups[0]["lr"]:.2e}',
         })
         if saved_flag and (epoch + 1) % 50 == 0:
             tqdm.write(f"  [BEST SAVED @ epoch {epoch+1}]")
 
-    print(f"Training Complete! Best Test Loss: {best_test_loss:.5f}. Model saved to {save_path}")
+    print(f"Training Complete! Best Test Loss: {best_test_loss:.4g}. Model saved to {save_path}")
 
     # Save loss history
     np.save(os.path.join(args.save_dir, 'history.npy'), history)

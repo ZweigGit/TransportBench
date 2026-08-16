@@ -151,9 +151,9 @@ def main():
 
     print("-" * 50)
     print(f"Final Results for {args.model.upper()}:")
-    print(f"Mean Absolute Error (MAE) : {final_mae:.5f}")
-    print(f"Mean Squared Error (MSE)  : {final_mse:.5f}")
-    print(f"Relative L2 Error         : {final_rel_l2:.5f}")
+    print(f"Mean Absolute Error (MAE) : {final_mae:.4g}")
+    print(f"Mean Squared Error (MSE)  : {final_mse:.4g}")
+    print(f"Relative L2 Error         : {final_rel_l2:.4g}")
     print("-" * 50)
 
     # 5. Generate visualizations for multiple samples and variables

@@ -117,7 +117,7 @@ def main():
         test_loss_val /= len(test_loader)
 
         if ep % 50 == 0 or ep == args.epochs - 1:
-            log(f"Ep {ep:04d} | LR: {scheduler.get_last_lr()[0]:.1e} | Train: {train_loss_val:.5f} | Test(Pure): {test_loss_val:.5f} | W_wall: {w_wall:.1f}")
+            log(f"Ep {ep:04d} | LR: {scheduler.get_last_lr()[0]:.1e} | Train: {train_loss_val:.4g} | Test(Pure): {test_loss_val:.4g} | W_wall: {w_wall:.1f}")
 
         # Save best model after epoch 1000 to prevent early overfitting
         if ep >= 1000 and test_loss_val < best_test_loss:

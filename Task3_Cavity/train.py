@@ -136,9 +136,9 @@ def main():
 
         if epoch % 50 == 0 or epoch == 1:
             elapsed = time.time() - start_time
-            print(f"Epoch [{epoch}/{args.epochs}] | Train: {avg_train_loss:.5f} | Test: {avg_test_loss:.5f} | LR: {optimizer.param_groups[0]['lr']:.2e} | Time: {elapsed:.1f}s{saved_flag}")
+            print(f"Epoch [{epoch}/{args.epochs}] | Train: {avg_train_loss:.4g} | Test: {avg_test_loss:.4g} | LR: {optimizer.param_groups[0]['lr']:.2e} | Time: {elapsed:.1f}s{saved_flag}")
 
-    print(f"🎉 Training Complete! Best Test Loss: {best_test_loss:.5f}. Model saved to {save_path}")
+    print(f"🎉 Training Complete! Best Test Loss: {best_test_loss:.4g}. Model saved to {save_path}")
 
 if __name__ == "__main__":
     main()

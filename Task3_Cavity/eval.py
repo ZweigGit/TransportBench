@@ -97,7 +97,7 @@ def main():
     final_rel_l2 = total_l2_error / len(test_loader.dataset)
 
     print("-" * 50)
-    print(f"🏆 Results for {args.model.upper()}: MAE = {final_mae:.5f} | Rel L2 = {final_rel_l2*100:.2f}%")
+    print(f"🏆 Results for {args.model.upper()}: MAE = {final_mae:.4g} | Rel L2 = {final_rel_l2*100:.2f}%")
 
     nx, ny = dataset.nx, dataset.ny
     vx = np.linspace(0, 1, nx)
