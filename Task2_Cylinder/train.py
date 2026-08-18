@@ -20,12 +20,13 @@ from model_hyperdeeponet import HyperDeepONet
 from model_hyper_mscale_deeponet import HyperMscaleDeepONet
 from model_c_hyperdeeponet import c_HyperDeepONet
 from model_fusion_deeponet import Fusion_DeepONet
+from model_residual_fusion_deeponet import Residual_Fusion_DeepONet
 from data_loader import CylinderDataset
 
 def get_args():
     parser = argparse.ArgumentParser(description="TransportBench - Task II: Cylinder Flow")
     parser.add_argument('--model', type=str, required=True,
-                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'fusion_deeponet'],
+                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet'],
                         help='Choose the baseline model')
     parser.add_argument('--epochs', type=int, default=2500, help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=16, help='Batch size')
@@ -97,6 +98,10 @@ def main():
         # 1,010,034 params (~1.01M budget), branch [2,278,...,278,1112], trunk [2,278,...,278,278]
         model = Fusion_DeepONet(branch_dim=2, trunk_dim=2, hidden_dim=278, num_outputs=4,
                                 depth=5, activation='GELU')
+    elif args.model == 'residual_fusion_deeponet':
+        # Same 1,010,034 params; branch-to-trunk gate uses 1+skip (residual)
+        model = Residual_Fusion_DeepONet(branch_dim=2, trunk_dim=2, hidden_dim=278, num_outputs=4,
+                                         depth=5, activation='GELU')
 
     model = model.to(device)
     print(f"Model Parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.2f} M")
