@@ -48,6 +48,12 @@ class c_HyperDeepONet(nn.Module):
         branch_dims = [branch_dim + chunk_in] + [branch_hidden_dim] * branch_depth + [chunk_out]
         self.branch_net = _MLP(branch_dims, act)
 
+        # Zero-init the branch output weights so generated trunk weight matrices
+        # start at 0 (no amplitude blow-up). Keep the bias (default small): it
+        # seeds nonzero trunk activations so gradients bootstrap through the
+        # zeroed layers — zeroing bias too would deadlock the trunk weights.
+        nn.init.zeros_(self.branch_net.net[-1].weight)
+
     def _branch_forward(self, x):
         """Run branch net on x → trunk parameters."""
         return self.branch_net(x)  # [B, t_para]
