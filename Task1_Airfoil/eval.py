@@ -51,6 +51,11 @@ def main():
     _, test_data = random_split(dataset,[train_size, test_size], generator=torch.Generator().manual_seed(42))
     test_loader = DataLoader(test_data, batch_size=1, shuffle=False)
 
+    # Per-sensor branch-input stats for all coordinate-based models;
+    # overwritten by checkpoint buffers on load
+    if data_mode == 'deeponet':
+        branch_mean, branch_std = dataset.branch_stats()
+
     # 2. Initialize model
     if args.model == 'fno':
         model = FNO2d(modes1=12, modes2=12, width=28, in_channels=3, out_channels=4)
@@ -61,34 +66,39 @@ def main():
     elif args.model == 'ae':
         model = AutoEncoder(in_channels=3, out_channels=4, base_dim=24)
     elif args.model == 'deeponet':
-        model = BoltzmannDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=256, num_outputs=4)
+        model = BoltzmannDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=256, num_outputs=4,
+                                  branch_mean=branch_mean, branch_std=branch_std)
     elif args.model == 'pt':
-        model = PointTransformerONet(hidden_dim=256, num_outputs=4)
+        model = PointTransformerONet(hidden_dim=256, num_outputs=4,
+                                     branch_mean=branch_mean, branch_std=branch_std)
     elif args.model == 'mscale_deeponet':
         model = MscaleDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=181, num_outputs=4,
-                               scales=[1, 2, 4, 8, 16], depth=4, activation='GELU')
+                               scales=[1, 2, 4, 8, 16], depth=4, activation='GELU',
+                               branch_mean=branch_mean, branch_std=branch_std)
     elif args.model == 'hyperdeeponet':
         model = HyperDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=76, num_outputs=4,
-                              trunk_depth=3, branch_depth=3, activation='GELU')
+                              trunk_depth=3, branch_depth=3, activation='GELU',
+                              branch_mean=branch_mean, branch_std=branch_std)
     elif args.model == 'c_hyperdeeponet':
         # 1'' config: 999,047 params (~1.00M budget), trunk [2,256,256,256,256,4], branch hidden 225
-        # branch_mean/std get overwritten by checkpoint buffers on load
-        branch_mean, branch_std = dataset.branch_stats()
         model = c_HyperDeepONet(branch_dim=674, trunk_dim=2, trunk_hidden_dim=256, branch_hidden_dim=225,
                                 num_outputs=4, trunk_depth=4, branch_depth=3, activation='GELU',
                                 chunk_in=1024, chunk_out=512,
                                 branch_mean=branch_mean, branch_std=branch_std)
     elif args.model == 'hyper_mscale_deeponet':
         model = HyperMscaleDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=67, num_outputs=4,
-                                    depth=4, activation='GELU')
+                                    depth=4, activation='GELU',
+                                    branch_mean=branch_mean, branch_std=branch_std)
     elif args.model == 'fusion_deeponet':
         # 1,007,000 params (~1.01M budget), branch [674,253,...,253,1012], trunk [2,253,...,253,253]
         model = Fusion_DeepONet(branch_dim=674, trunk_dim=2, hidden_dim=253, num_outputs=4,
-                                depth=5, activation='GELU')
+                                depth=5, activation='GELU',
+                                branch_mean=branch_mean, branch_std=branch_std)
     elif args.model == 'residual_fusion_deeponet':
         # Same 1,007,000 params; branch-to-trunk gate uses 1+skip (residual)
         model = Residual_Fusion_DeepONet(branch_dim=674, trunk_dim=2, hidden_dim=253, num_outputs=4,
-                                         depth=5, activation='GELU')
+                                         depth=5, activation='GELU',
+                                         branch_mean=branch_mean, branch_std=branch_std)
 
     model = model.to(device)
     

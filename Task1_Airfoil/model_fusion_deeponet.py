@@ -6,7 +6,8 @@ class sin_act(nn.Module):
         return torch.sin(x)
 
 class Fusion_DeepONet(nn.Module):
-    def __init__(self, branch_dim=674, trunk_dim=2, hidden_dim=253, num_outputs=4, depth=5, activation='GELU'):
+    def __init__(self, branch_dim=674, trunk_dim=2, hidden_dim=253, num_outputs=4, depth=5, activation='GELU',
+                 branch_mean=None, branch_std=None):
         """
         Fusion DeepONet for Airfoil Task
         Args:
@@ -58,17 +59,26 @@ class Fusion_DeepONet(nn.Module):
         self.num_outputs = num_outputs
         self.hidden_dim = hidden_dim
 
+        # Per-sensor branch-input normalization (see c_HyperDeepONet): stored
+        # as buffers so checkpoints carry the constants. None defaults = identity.
+        self.register_buffer('branch_mean',
+                             torch.zeros(branch_dim) if branch_mean is None else branch_mean.reshape(-1).float())
+        self.register_buffer('branch_std',
+                             torch.ones(branch_dim) if branch_std is None else branch_std.reshape(-1).float())
+
     def forward(self, x_branch, x_trunk):
 
         """Forward pass.
-        
+
         Args:
             x_branch: [Batch, branch_dim]
             x_trunk:  [N_points, trunk_dim]
-        
+
         Returns:
             [Batch, N_points, num_outputs]
         """
+
+        x_branch = (x_branch - self.branch_mean) / self.branch_std
 
         if x_trunk.dim() == 2:
             # [N, trunk_dim] -> [1, N, trunk_dim] -> [B, N, trunk_dim]

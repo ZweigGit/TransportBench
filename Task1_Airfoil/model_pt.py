@@ -47,9 +47,10 @@ class PointTransformerBranch(nn.Module):
         return out
 
 class PointTransformerONet(nn.Module):
-    def __init__(self, hidden_dim=256, num_outputs=4):
+    def __init__(self, hidden_dim=256, num_outputs=4, branch_dim=674,
+                 branch_mean=None, branch_std=None):
         super().__init__()
-        
+
         self.num_outputs = num_outputs
         self.hidden_dim = hidden_dim
         
@@ -74,8 +75,16 @@ class PointTransformerONet(nn.Module):
             nn.Linear(hidden_dim, hidden_dim), self.act
         )
 
+        # Per-sensor branch-input normalization (see c_HyperDeepONet): stored
+        # as buffers so checkpoints carry the constants. None defaults = identity.
+        self.register_buffer('branch_mean',
+                             torch.zeros(branch_dim) if branch_mean is None else branch_mean.reshape(-1).float())
+        self.register_buffer('branch_std',
+                             torch.ones(branch_dim) if branch_std is None else branch_std.reshape(-1).float())
+
     def forward(self, x_branch, x_trunk):
-        # 1. Restore point cloud structure: [B, 674] -> [B, 337, 2]
+        # 0. Per-sensor normalization, then restore point cloud: [B, 674] -> [B, 337, 2]
+        x_branch = (x_branch - self.branch_mean) / self.branch_std
         B = x_branch.shape[0]
         x_branch_points = x_branch.view(B, -1, 2)
         

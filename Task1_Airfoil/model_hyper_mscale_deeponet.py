@@ -56,7 +56,7 @@ class HyperMscaleDeepONet(nn.Module):
         activation:   'GELU' or 'Tanh' (branch activation; trunk always uses B-spline).
     """
     def __init__(self, branch_dim, trunk_dim, hidden_dim=256, num_outputs=4,
-                 depth=4, activation='GELU'):
+                 depth=4, activation='GELU', branch_mean=None, branch_std=None):
         super().__init__()
 
         if activation == 'GELU':
@@ -85,6 +85,13 @@ class HyperMscaleDeepONet(nn.Module):
         # --- Stash shapes for trunk forward ---
         self._trunk_dims = trunk_dims
         self._output_dims = output_dims
+
+        # Per-sensor branch-input normalization (see c_HyperDeepONet): stored
+        # as buffers so checkpoints carry the constants. None defaults = identity.
+        self.register_buffer('branch_mean',
+                             torch.zeros(branch_dim) if branch_mean is None else branch_mean.reshape(-1).float())
+        self.register_buffer('branch_std',
+                             torch.ones(branch_dim) if branch_std is None else branch_std.reshape(-1).float())
 
     @staticmethod
     def _apply_layer(params, x, d_in, d_out, start, act_fn=None):
@@ -140,5 +147,6 @@ class HyperMscaleDeepONet(nn.Module):
         Returns:
             [Batch, N_points, num_outputs]
         """
+        x_branch = (x_branch - self.branch_mean) / self.branch_std
         params = self.branch_net(x_branch)  # [B, t_para]
         return self._trunk_forward(params, x_trunk)

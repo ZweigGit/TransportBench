@@ -13,7 +13,7 @@ import torch.nn as nn
 class HyperDeepONet(nn.Module):
     def __init__(self, branch_dim=674, trunk_dim=2, hidden_dim=46,
                  num_outputs=4, trunk_depth=3, branch_depth=3,
-                 activation='GELU'):
+                 activation='GELU', branch_mean=None, branch_std=None):
         super().__init__()
 
         if activation == 'Tanh':
@@ -38,6 +38,13 @@ class HyperDeepONet(nn.Module):
         self.branch_net = _MLP(branch_dims, act)
 
         self.num_outputs = num_outputs
+
+        # Per-sensor branch-input normalization (see c_HyperDeepONet): stored
+        # as buffers so checkpoints carry the constants. None defaults = identity.
+        self.register_buffer('branch_mean',
+                             torch.zeros(branch_dim) if branch_mean is None else branch_mean.reshape(-1).float())
+        self.register_buffer('branch_std',
+                             torch.ones(branch_dim) if branch_std is None else branch_std.reshape(-1).float())
 
     def _branch_forward(self, x):
         """Run branch net on x → trunk parameters."""
@@ -84,6 +91,7 @@ class HyperDeepONet(nn.Module):
         Returns:
             [B, N, num_outputs]
         """
+        x_branch = (x_branch - self.branch_mean) / self.branch_std
         params = self._branch_forward(x_branch)  # [B, t_para]
         return self._trunk_forward(params, x_trunk)
 
