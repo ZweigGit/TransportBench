@@ -12,7 +12,7 @@ import math
 
 
 class c_HyperDeepONet(nn.Module):
-    def __init__(self, branch_dim=674, trunk_dim=2, hidden_dim=46, num_basis = 100,
+    def __init__(self, branch_dim=674, trunk_dim=2, trunk_hidden_dim=46, branch_hidden_dim=46,
                  num_outputs=4, trunk_depth=3, branch_depth=3,
                  activation='GELU',chunk_in= 100, chunk_out = 100):
         super().__init__()
@@ -27,7 +27,7 @@ class c_HyperDeepONet(nn.Module):
             raise ValueError(f"Unsupported activation: {activation}")
 
         # Trunk architecture: [trunk_dim, hidden, ..., hidden, num_outputs]
-        self.trunk_dims = ([trunk_dim] + [hidden_dim] * trunk_depth + [num_basis, num_outputs])
+        self.trunk_dims = ([trunk_dim] + [trunk_hidden_dim] * trunk_depth + [num_outputs])
 
         # Total parameters needed to construct the trunk net
         t_para = 0
@@ -45,7 +45,7 @@ class c_HyperDeepONet(nn.Module):
         self.latent_chunk = nn.Parameter(torch.randn(self.num_chunks, chunk_in))
 
         # Branch: single network → t_para (trunk weights/biases)
-        branch_dims = [branch_dim + chunk_in] + [hidden_dim] * branch_depth + [chunk_out]
+        branch_dims = [branch_dim + chunk_in] + [branch_hidden_dim] * branch_depth + [chunk_out]
         self.branch_net = _MLP(branch_dims, act)
 
     def _branch_forward(self, x):
