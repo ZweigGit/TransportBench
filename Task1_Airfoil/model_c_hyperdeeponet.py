@@ -14,7 +14,8 @@ import math
 class c_HyperDeepONet(nn.Module):
     def __init__(self, branch_dim=674, trunk_dim=2, trunk_hidden_dim=46, branch_hidden_dim=46,
                  num_outputs=4, trunk_depth=3, branch_depth=3,
-                 activation='GELU',chunk_in= 100, chunk_out = 100):
+                 activation='GELU',chunk_in= 100, chunk_out = 100,
+                 branch_mean=None, branch_std=None):
         super().__init__()
 
         if activation == 'Tanh':
@@ -53,6 +54,15 @@ class c_HyperDeepONet(nn.Module):
         # seeds nonzero trunk activations so gradients bootstrap through the
         # zeroed layers — zeroing bias too would deadlock the trunk weights.
         nn.init.zeros_(self.branch_net.net[-1].weight)
+
+        # Per-sensor branch-input normalization (buffers, saved with the model):
+        # center on the dataset mean and scale by inter-sample std so the tiny
+        # geometry differences between Task-1 samples reach the branch at O(1).
+        # Defaults (None) keep the raw input, i.e. identity.
+        self.register_buffer('branch_mean',
+                             torch.zeros(branch_dim) if branch_mean is None else branch_mean.reshape(-1).float())
+        self.register_buffer('branch_std',
+                             torch.ones(branch_dim) if branch_std is None else branch_std.reshape(-1).float())
 
     def _branch_forward(self, x):
         """Run branch net on x → trunk parameters."""
@@ -103,7 +113,8 @@ class c_HyperDeepONet(nn.Module):
 
         B = x_branch.shape[0]
         K = self.num_chunks
-        
+
+        x_branch = (x_branch - self.branch_mean) / self.branch_std
         x_branch = x_branch.unsqueeze(1).repeat(1, K, 1)    # [B, branch_dim] -> [B, 1, branch_dim] -> [B, K, branch_dim]
         z = self.latent_chunk.unsqueeze(0).expand(B, -1, -1)    # [K, chunk_in] -> [B, K, chunk_in]
 
