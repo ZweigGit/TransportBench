@@ -62,16 +62,6 @@ class AirfoilDataset(Dataset):
         else:
             raise ValueError(f"Unknown mode: {self.mode}")
 
-    def branch_stats(self, eps=1e-3):
-        """Per-sensor mean/std of the flattened branch inputs (geometry points).
-
-        Task-1 geometries differ by <1% of the sensor scale, so centering each
-        sensor and scaling by its inter-sample std restores an O(1) discriminative
-        signal. eps clamps near-static sensors instead of amplifying noise.
-        """
-        flat = self.geo_points.reshape(self.n_samples, -1)
-        return flat.mean(dim=0), flat.std(dim=0).clamp_min(eps)
-
     # Auxiliary function: Denormalization
     def denormalize(self, tensor, var_name):
         """Restore [-1, 1] normalized tensors back to their physical quantities"""
