@@ -2,8 +2,7 @@ import torch
 import torch.nn as nn
 
 class BoltzmannDeepONet(nn.Module):
-    def __init__(self, branch_dim, trunk_dim, hidden_dim=256, num_outputs=4, depth=5, activation='GELU',
-                 branch_mean=None, branch_std=None):
+    def __init__(self, branch_dim, trunk_dim, hidden_dim=256, num_outputs=4, depth=5, activation='GELU'):
         super().__init__()
         
         # 1. Select activation function
@@ -48,20 +47,11 @@ class BoltzmannDeepONet(nn.Module):
         self.num_outputs = num_outputs
         self.hidden_dim = hidden_dim
 
-        # Per-sensor branch-input normalization (see c_HyperDeepONet): stored
-        # as buffers so checkpoints carry the constants. None defaults = identity.
-        self.register_buffer('branch_mean',
-                             torch.zeros(branch_dim) if branch_mean is None else branch_mean.reshape(-1).float())
-        self.register_buffer('branch_std',
-                             torch.ones(branch_dim) if branch_std is None else branch_std.reshape(-1).float())
-
     def forward(self, x_branch, x_trunk):
         """
         x_branch: [Batch, branch_dim]
         x_trunk:  [N_points, trunk_dim]
         """
-        x_branch = (x_branch - self.branch_mean) / self.branch_std
-
         # B_out: [Batch, hidden * num_outputs]
         B_out = self.branch_net(x_branch)
         

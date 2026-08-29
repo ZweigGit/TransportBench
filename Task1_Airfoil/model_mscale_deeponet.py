@@ -73,8 +73,7 @@ class MscaleDeepONet(nn.Module):
         activation: Activation type ('GELU', 'Tanh', or 'Phi' for B-spline).
     """
     def __init__(self, branch_dim=674, trunk_dim=2, hidden_dim=256, num_outputs=4,
-                 scales=None, depth=4, activation='GELU',
-                 branch_mean=None, branch_std=None):
+                 scales=None, depth=4, activation='GELU'):
         super().__init__()
 
         if scales is None:
@@ -101,13 +100,6 @@ class MscaleDeepONet(nn.Module):
         self.num_outputs = num_outputs
         self.hidden_dim = hidden_dim
 
-        # Per-sensor branch-input normalization (see c_HyperDeepONet): stored
-        # as buffers so checkpoints carry the constants. None defaults = identity.
-        self.register_buffer('branch_mean',
-                             torch.zeros(branch_dim) if branch_mean is None else branch_mean.reshape(-1).float())
-        self.register_buffer('branch_std',
-                             torch.ones(branch_dim) if branch_std is None else branch_std.reshape(-1).float())
-
     def forward(self, x_branch, x_trunk):
         """Forward pass.
 
@@ -118,7 +110,6 @@ class MscaleDeepONet(nn.Module):
         Returns:
             [Batch, N_points, num_outputs]
         """
-        x_branch = (x_branch - self.branch_mean) / self.branch_std
         B = x_branch.shape[0]
         b = self.branch_net(x_branch)                       # [B, hidden_dim]
         t = self.trunk_net(x_trunk)                         # [B_or_1, N, hidden_dim]
