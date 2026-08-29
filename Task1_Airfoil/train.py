@@ -116,10 +116,10 @@ def main():
                               trunk_depth=3, branch_depth=3, activation='GELU',
                               branch_mean=branch_mean, branch_std=branch_std)
     elif args.model == 'c_hyperdeeponet':
-        # 999,582 params (~1.00M budget), trunk [2,256,256,256,256,4], branch hidden 94, K=779
-        model = c_HyperDeepONet(branch_dim=674, trunk_dim=2, trunk_hidden_dim=256, branch_hidden_dim=94,
+        # 1'' config: 999,047 params (~1.00M budget), trunk [2,256,256,256,256,4], branch hidden 225
+        model = c_HyperDeepONet(branch_dim=674, trunk_dim=2, trunk_hidden_dim=256, branch_hidden_dim=225,
                                 num_outputs=4, trunk_depth=4, branch_depth=3, activation='GELU',
-                                chunk_in=1024, chunk_out=256,
+                                chunk_in=1024, chunk_out=512,
                                 branch_mean=branch_mean, branch_std=branch_std)
     elif args.model == 'hyper_mscale_deeponet':
         model = HyperMscaleDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=67, num_outputs=4,
