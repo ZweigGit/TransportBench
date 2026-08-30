@@ -3,7 +3,7 @@ import torch.nn as nn
 import time
 import os
 import argparse
-from data_utils import get_dataloader_and_stats
+from data_loader import get_dataloader_and_stats
 
 from model_ae import AutoEncoder2d
 from model_deeponet import DeepONet2d
@@ -15,7 +15,7 @@ from model_vit import VisionTransformer
 def get_args():
     parser = argparse.ArgumentParser(description="Universal Golden Protocol Training Script")
     parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit'])
-    parser.add_argument('--data_path', type=str, required=True)
+    parser.add_argument('--data_path', type=str, default='../data/double_cone_dataset_with_physics.pt')
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--epochs', type=int, default=3000)
     parser.add_argument('--lr', type=float, default=5e-4)
