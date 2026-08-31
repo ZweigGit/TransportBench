@@ -12,11 +12,14 @@ from model_unet import FluidUNet
 from model_vit import VisionTransformer
 from model_ae import AutoEncoder2d
 from model_pt import PointTransformer
+from model_hyperdeeponet import HyperDeepONet
+from model_mscale_deeponet import MscaleDeepONet
+from model_hyper_mscale_deeponet import HyperMscaleDeepONet
 
 def get_args():
     parser = argparse.ArgumentParser(description="Evaluation for Task 4: Double Cone Flow")
-    parser.add_argument('--model', type=str, required=True, 
-                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt'], 
+    parser.add_argument('--model', type=str, required=True,
+                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet'],
                         help='Choose the model to evaluate')
     parser.add_argument('--no_fourier', action='store_true',
                         help='Model does not use Fourier encoding')
@@ -34,9 +37,12 @@ def main():
     args = get_args()
     use_fourier = not args.no_fourier
     fourier_suffix = "_fourier" if use_fourier else "_nofourier"
+    # Coordinate-based DeepONet variants take (branch, trunk); no fourier encoding
+    coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet'}
+    data_mode = 'coord' if args.model in coord_models else 'grid'
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    run_name = args.model + fourier_suffix
+
+    run_name = args.model + ('' if data_mode == 'coord' else fourier_suffix)
 
     # Per-model output subdirectory, aligned with Task I convention
     if args.output_dir is None:
@@ -91,7 +97,13 @@ def main():
         model = DeepONet2d(in_channels=5, out_channels=4, basis_size=256, use_fourier=checkpoint_fourier)
     elif args.model == 'pt':
         model = PointTransformer(in_channels=5, out_channels=4, latent_dim=512, num_latents=1024, depth=10, use_fourier=checkpoint_fourier)
-    
+    elif args.model == 'hyperdeeponet':
+        model = HyperDeepONet(branch_dim=3, trunk_dim=2, hidden_dim=78, num_outputs=4, trunk_depth=3, branch_depth=3, activation='GELU')
+    elif args.model == 'mscale_deeponet':
+        model = MscaleDeepONet(branch_dim=3, trunk_dim=2, branch_hidden=256, trunk_hidden=256, num_outputs=4, scales=[1, 2, 4, 8, 16, 32, 64, 128], branch_depth=4, trunk_depth=4, activation='GELU')
+    elif args.model == 'hyper_mscale_deeponet':
+        model = HyperMscaleDeepONet(branch_dim=3, trunk_dim=2, hidden_dim=68, trunk_hidden=68, num_outputs=4, depth=4, trunk_depth=4, activation='GELU')
+
     model = model.to(device)
     model.load_state_dict(checkpoint.get('model_state', checkpoint))
     model.eval()
@@ -111,7 +123,14 @@ def main():
     with torch.no_grad():
         bs = 8
         for s in range(0, x_test.shape[0], bs):
-            pred_enc = model(x_norm.encode(x_test[s:s+bs]))
+            x_enc_batch = x_norm.encode(x_test[s:s+bs])
+            if data_mode == 'coord':
+                # Branch = flow params (ch 2-4), trunk = shared grid coords (ch 0-1)
+                branch = x_enc_batch[:, 2:5, 0, 0]
+                trunk = x_norm.encode(x_test[0:1])[0, 0:2].permute(1, 2, 0).reshape(-1, 2)
+                pred_enc = model(branch, trunk).reshape(x_enc_batch.shape[0], 4, *x_enc_batch.shape[2:])
+            else:
+                pred_enc = model(x_enc_batch)
             y_enc = y_norm.encode(y_test_log[s:s+bs])  # target in normalized [0,1] space
 
             total_mae += criterion_mae(pred_enc, y_enc).item()
@@ -140,7 +159,7 @@ def main():
     # Save eval results
     eval_file = os.path.join(args.output_dir, 'eval_results.txt')
     with open(eval_file, 'w', encoding='utf-8') as f:
-        f.write(f"Model       : {args.model.upper()} ({'fourier' if use_fourier else 'nofourier'})\n")
+        f.write(f"Model       : {args.model.upper()} ({'coordinate-based' if data_mode == 'coord' else 'fourier' if use_fourier else 'nofourier'})\n")
         f.write(f"Checkpoint  : {ckpt_path}\n")
         f.write(f"Metric space: normalized [0,1] (p=log10)\n")
         f.write(f"MAE         : {final_mae:.4g}\n")
@@ -158,7 +177,12 @@ def main():
 
     with torch.no_grad():
         x_encoded = x_norm.encode(x_input)
-        pred_encoded = model(x_encoded)
+        if data_mode == 'coord':
+            branch = x_encoded[:, 2:5, 0, 0]
+            trunk = x_encoded[0, 0:2].permute(1, 2, 0).reshape(-1, 2)
+            pred_encoded = model(branch, trunk).reshape(1, 4, *x_encoded.shape[2:])
+        else:
+            pred_encoded = model(x_encoded)
         y_pred_log = y_norm.decode(pred_encoded)
 
     y_pred_phys = y_pred_log.clone()
@@ -171,7 +195,8 @@ def main():
     x_np, y_true, y_pred, err = to_np(x_input), to_np(y_true_phys), to_np(y_pred_phys), to_np(error)
     Grid_X, Grid_Y = x_np[0], x_np[1]
     
-    fourier_text = "With Fourier" if checkpoint_fourier else "No Fourier"
+    fourier_text = ("Coordinate-based" if data_mode == 'coord'
+                    else "With Fourier" if checkpoint_fourier else "No Fourier")
     title_str = f"{args.model.upper()} | Benchmark Case (Global Idx: {actual_idx}) | {fourier_text}"
     plot_configs = [{'name': 'Velocity u (m/s)', 'idx': 1, 'cmap': 'jet'},
                     {'name': 'Pressure p (Pa)', 'idx': 3, 'cmap': 'magma'}]

@@ -14,10 +14,13 @@ from model_fno import FNO2d
 from model_pt import PointTransformer
 from model_unet import FluidUNet
 from model_vit import VisionTransformer
+from model_hyperdeeponet import HyperDeepONet
+from model_mscale_deeponet import MscaleDeepONet
+from model_hyper_mscale_deeponet import HyperMscaleDeepONet
 
 def get_args():
     parser = argparse.ArgumentParser(description="Universal Golden Protocol Training Script")
-    parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit'])
+    parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet'])
     parser.add_argument('--data_path', type=str, default='../data/double_cone_dataset_with_physics.pt')
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--epochs', type=int, default=2500)
@@ -33,13 +36,20 @@ def build_model(model_name, use_fourier):
     elif model_name == 'pt': return PointTransformer(in_channels=5, out_channels=4, latent_dim=512, num_latents=1024, depth=10, use_fourier=use_fourier)
     elif model_name == 'unet': return FluidUNet(in_channels=5, out_channels=4, features=64, use_fourier=use_fourier)
     elif model_name == 'vit': return VisionTransformer(in_channels=5, out_channels=4, embed_dim=512, depth=10, use_fourier=use_fourier)
+    # Coordinate-based (branch = Mach/Temp/Re, trunk = x/y grid coords)
+    elif model_name == 'hyperdeeponet': return HyperDeepONet(branch_dim=3, trunk_dim=2, hidden_dim=256, num_outputs=4, trunk_depth=3, branch_depth=4, activation='GELU')
+    elif model_name == 'mscale_deeponet': return MscaleDeepONet(branch_dim=3, trunk_dim=2, branch_hidden=2048, trunk_hidden=256, num_outputs=4, branch_depth=5, trunk_depth=8, activation='GELU')
+    elif model_name == 'hyper_mscale_deeponet': return HyperMscaleDeepONet(branch_dim=3, trunk_dim=2, hidden_dim=128, trunk_hidden=128, num_outputs=4, depth=4, trunk_depth=3, activation='GELU')
 
 def main():
     args = get_args()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     use_fourier = not args.no_fourier
-    fourier_suffix = "_fourier" if use_fourier else "_nofourier"
-    
+    # Coordinate-based DeepONet variants take (branch, trunk) instead of a grid image
+    coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet'}
+    data_mode = 'coord' if args.model in coord_models else 'grid'
+    fourier_suffix = "" if data_mode == 'coord' else ("_fourier" if use_fourier else "_nofourier")
+
     # Per-model output subdirectory, aligned with Task I convention
     args.save_dir = os.path.join('output', args.model + fourier_suffix)
     os.makedirs(args.save_dir, exist_ok=True)
@@ -90,17 +100,27 @@ def main():
             y_enc = y_norm.encode(y)
 
             optimizer.zero_grad()
-            out_enc = model(x_enc)
+            if data_mode == 'coord':
+                # Branch = flow params (ch 2-4: Mach/Temp/Re, constant per sample),
+                # trunk = shared x/y grid coords (ch 0-1, identical across samples)
+                branch = x_enc[:, 2:5, 0, 0]                                  # [B, 3]
+                trunk = x_enc[0, 0:2].permute(1, 2, 0).reshape(-1, 2)          # [6528, 2]
+                target = y_enc.permute(0, 2, 3, 1).reshape(x_enc.shape[0], -1, 4)  # [B, 6528, 4]
+                out_enc = model(branch, trunk)
+                # Plain L1: grid-position curriculum weights don't apply in flat space
+                loss = loss_fn(out_enc, target).mean()
+            else:
+                out_enc = model(x_enc)
 
-            # L1 Loss weight matrix
-            raw_loss = loss_fn(out_enc, y_enc)
-            w = torch.ones_like(raw_loss)
-            w[:, :, 2, :] = w_wall      # Wall
-            w[:, :, 1, :] = w_near      # Near-wall
-            w[:, :, 3, :] = w_near      # Near-wall
-            w[:, 3, :, :] *= w_p        # Pressure channel augmentation
+                # L1 Loss weight matrix
+                raw_loss = loss_fn(out_enc, y_enc)
+                w = torch.ones_like(raw_loss)
+                w[:, :, 2, :] = w_wall      # Wall
+                w[:, :, 1, :] = w_near      # Near-wall
+                w[:, :, 3, :] = w_near      # Near-wall
+                w[:, 3, :, :] *= w_p        # Pressure channel augmentation
 
-            loss = (raw_loss * w).mean()
+                loss = (raw_loss * w).mean()
             loss.backward()
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -118,10 +138,16 @@ def main():
             for x_test, y_test in test_loader:
                 x_enc_test = x_norm.encode(x_test)
                 y_enc_test = y_norm.encode(y_test)
-                out_enc_test = model(x_enc_test)
-                
-                # Unweighted L1 loss for validation
-                raw_test_loss = loss_fn(out_enc_test, y_enc_test)
+                if data_mode == 'coord':
+                    branch = x_enc_test[:, 2:5, 0, 0]
+                    trunk = x_enc_test[0, 0:2].permute(1, 2, 0).reshape(-1, 2)
+                    target = y_enc_test.permute(0, 2, 3, 1).reshape(x_enc_test.shape[0], -1, 4)
+                    out_enc_test = model(branch, trunk)
+                    raw_test_loss = loss_fn(out_enc_test, target)
+                else:
+                    out_enc_test = model(x_enc_test)
+                    # Unweighted L1 loss for validation
+                    raw_test_loss = loss_fn(out_enc_test, y_enc_test)
                 test_loss_val += raw_test_loss.mean().item()
                 
         test_loss_val /= len(test_loader)

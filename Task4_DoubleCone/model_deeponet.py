@@ -43,7 +43,7 @@ class DeepONet2d(nn.Module):
         
         # Branch Net: Physical parameter inputs
         self.branch_net = DenseNet(input_dim=3, output_dim=out_channels * basis_size, 
-                                   hidden_width=2048, hidden_depth=3)
+                                   hidden_width=2048, hidden_depth=4)
         
         # Trunk Net: Coordinate inputs
         if self.use_fourier:
@@ -53,7 +53,7 @@ class DeepONet2d(nn.Module):
             trunk_in_dim = 2
             
         self.trunk_net = DenseNet(input_dim=trunk_in_dim, output_dim=basis_size, 
-                                  hidden_width=2048, hidden_depth=3)
+                                  hidden_width=2048, hidden_depth=4)
         
         self.bias = nn.Parameter(torch.zeros(out_channels))
 
