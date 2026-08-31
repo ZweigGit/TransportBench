@@ -36,17 +36,20 @@ class _MscaleTrunk(nn.Module):
     """MscaleDNN trunk: parallel frequency-scaled branches stacked as output.
     Uses Phi (B-spline) activation for multi-scale frequency processing.
     No fusion layer — sub-network outputs are concatenated directly,
-    so trunk feature dim = n_scales * hidden_dim."""
-    def __init__(self, trunk_dim, hidden_dim, scales, depth):
+    so trunk feature dim = n_scales * out_dim."""
+    def __init__(self, trunk_dim, hidden_dim, scales, depth, out_dim=None):
         super().__init__()
         act = PhiActivation()
         n_scales = len(scales)
         self.scales = nn.Parameter(
             torch.tensor(scales, dtype=torch.float32), requires_grad=False
         )
-        branch_dims = [trunk_dim] + [hidden_dim] * (depth - 1) + [hidden_dim]
+        # out_dim: per-scale output width; None → hidden_dim (output = hidden width)
+        if out_dim is None:
+            out_dim = hidden_dim
+        branch_dims = [trunk_dim] + [hidden_dim] * depth + [out_dim]
         self.branches = nn.ModuleList([_FNN(branch_dims, act) for _ in range(n_scales)])
-        self.out_dim = n_scales * hidden_dim
+        self.out_dim = n_scales * out_dim
 
     def forward(self, x):
         single = x.dim() == 2
@@ -81,14 +84,31 @@ class MscaleDeepONet(nn.Module):
         branch_depth:  Number of hidden layers in the branch net.
         trunk_depth:   Number of hidden layers in each per-scale trunk FNN.
         activation:    Activation type ('GELU', 'Tanh', or 'Phi' for B-spline).
+        basis_size:    Number of trunk basis functions (= trunk feature dim,
+                       n_scales * out_dim). Sets each sub-network's OUTPUT
+                       width (basis_size // n_scales); hidden width stays
+                       trunk_hidden. Must be divisible by n_scales.
     """
     def __init__(self, branch_dim=3, trunk_dim=2, branch_hidden=512,
                  trunk_hidden=256, num_outputs=4, scales=None,
-                 branch_depth=6, trunk_depth=6, activation='GELU'):
+                 branch_depth=6, trunk_depth=6, activation='GELU',
+                 basis_size=None):
         super().__init__()
 
         if scales is None:
             scales = [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0]
+        n_scales = len(scales)
+
+        # basis_size = number of trunk basis functions = trunk feature dim.
+        # It sets each sub-network's OUTPUT width (basis_size // n_scales),
+        # leaving the hidden width (trunk_hidden) untouched.
+        out_dim = None
+        if basis_size is not None:
+            if basis_size % n_scales != 0:
+                raise ValueError(
+                    f"basis_size {basis_size} must be divisible by n_scales {n_scales}"
+                )
+            out_dim = basis_size // n_scales
 
         if activation == 'GELU':
             act = nn.GELU()
@@ -100,18 +120,18 @@ class MscaleDeepONet(nn.Module):
             raise ValueError(f"Unsupported activation: {activation}")
 
         # Trunk Net (MscaleDNN) — uses PhiActivation internally
-        self.trunk_net = _MscaleTrunk(trunk_dim, trunk_hidden, scales, trunk_depth)
+        self.trunk_net = _MscaleTrunk(trunk_dim, trunk_hidden, scales, trunk_depth, out_dim=out_dim)
         trunk_feat_dim = self.trunk_net.out_dim
 
-        if trunk_feat_dim != len(scales) * trunk_hidden:
+        if trunk_feat_dim != len(scales) * (out_dim if out_dim is not None else trunk_hidden):
             raise ValueError(
                 f"Trunk output dim {trunk_feat_dim} != sub-network output "
-                f"({trunk_hidden}) * n_scales ({len(scales)})"
+                f"({out_dim if out_dim is not None else trunk_hidden}) * n_scales ({len(scales)})"
             )
 
         # Branch Net — output dim inferred from trunk: num_outputs * trunk_feat_dim
         # (each output channel gets its own coefficient vector for the einsum)
-        branch_dims = [branch_dim] + [branch_hidden] * (branch_depth - 1) + [num_outputs * trunk_feat_dim]
+        branch_dims = [branch_dim] + [branch_hidden] * branch_depth + [num_outputs * trunk_feat_dim]
         self.branch_net = _FNN(branch_dims, act)
         self.num_outputs = num_outputs
         self.trunk_feat_dim = trunk_feat_dim

@@ -22,9 +22,9 @@ class DenseNet(nn.Module):
         super().__init__()
         layers =[]
         layers.append(nn.Linear(input_dim, hidden_width))
-        layers.append(nn.LayerNorm(hidden_width)) 
+        layers.append(nn.LayerNorm(hidden_width))
         layers.append(nn.GELU())
-        for _ in range(hidden_depth):
+        for _ in range(hidden_depth - 1):
             layers.append(nn.Linear(hidden_width, hidden_width))
             layers.append(nn.LayerNorm(hidden_width)) 
             layers.append(nn.GELU())
@@ -42,8 +42,8 @@ class DeepONet2d(nn.Module):
         self.use_fourier = use_fourier
         
         # Branch Net: Physical parameter inputs
-        self.branch_net = DenseNet(input_dim=3, output_dim=out_channels * basis_size, 
-                                   hidden_width=2048, hidden_depth=4)
+        self.branch_net = DenseNet(input_dim=3, output_dim=out_channels * basis_size,
+                                   hidden_width=2048, hidden_depth=5)
         
         # Trunk Net: Coordinate inputs
         if self.use_fourier:
@@ -52,8 +52,8 @@ class DeepONet2d(nn.Module):
         else:
             trunk_in_dim = 2
             
-        self.trunk_net = DenseNet(input_dim=trunk_in_dim, output_dim=basis_size, 
-                                  hidden_width=2048, hidden_depth=4)
+        self.trunk_net = DenseNet(input_dim=trunk_in_dim, output_dim=basis_size,
+                                  hidden_width=2048, hidden_depth=5)
         
         self.bias = nn.Parameter(torch.zeros(out_channels))
 

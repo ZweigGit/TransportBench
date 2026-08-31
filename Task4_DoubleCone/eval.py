@@ -21,6 +21,8 @@ def get_args():
                         help='Path to checkpoint (default: output/<model><_fourier|_nofourier>/best_model.pth)')
     parser.add_argument('--sample_idx', type=int, default=50,
                         help='Global sample index to visualize (Default: 50 for Benchmark Case)')
+    parser.add_argument('--test_sample_idx', type=int, default=0,
+                        help='Index into the TEST set to visualize (default: 0 = first test sample)')
     parser.add_argument('--output_dir', type=str, default=None,
                         help='Directory to save (default: output/<model><_fourier|_nofourier>)')
     return parser.parse_args()
@@ -141,75 +143,86 @@ def main():
         f.write(f"RL2E (p,log10): {final_p_rel_l2:.4g}\n")
     print(f"Saved eval results to: {eval_file}")
 
-    # Extract benchmark sample
-    actual_idx = args.sample_idx
-    print(f"Successfully extracted Benchmark Case (Global Idx {actual_idx}).")
-
-    x_input = x_data[actual_idx].unsqueeze(0).to(device)
-    y_true_phys = y_data[actual_idx].unsqueeze(0).to(device)
-
-    with torch.no_grad():
-        x_encoded = x_norm.encode(x_input)
-        if data_mode == 'coord':
-            branch = x_encoded[:, 2:5, 0, 0]
-            trunk = x_encoded[0, 0:2].permute(1, 2, 0).reshape(-1, 2)
-            pred_encoded = model(branch, trunk).reshape(1, 4, *x_encoded.shape[2:])
-        else:
-            pred_encoded = model(x_encoded)
-        y_pred_log = y_norm.decode(pred_encoded)
-
-    y_pred_phys = y_pred_log.clone()
-    y_pred_phys[:, 3, :, :] = torch.pow(10, y_pred_log[:, 3, :, :])
-    error = torch.abs(y_true_phys - y_pred_phys)
-
-    # Visualization
+    # ---- Visualization: benchmark sample (global index, unchanged) + test sample ----
     def to_np(t): return t.squeeze(0).cpu().numpy()
-    
-    x_np, y_true, y_pred, err = to_np(x_input), to_np(y_true_phys), to_np(y_pred_phys), to_np(error)
-    Grid_X, Grid_Y = x_np[0], x_np[1]
-    
-    fourier_text = ("Coordinate-based" if data_mode == 'coord'
-                    else "With Fourier" if checkpoint_fourier else "No Fourier")
-    title_str = f"{args.model.upper()} | Benchmark Case (Global Idx: {actual_idx}) | {fourier_text}"
-    plot_configs = [{'name': 'Velocity u (m/s)', 'idx': 1, 'cmap': 'jet'},
-                    {'name': 'Pressure p (Pa)', 'idx': 3, 'cmap': 'magma'}]
 
-    fig = plt.figure(figsize=(18, 14))
-    gs = fig.add_gridspec(3, 3)
-    plt.suptitle(title_str, fontsize=16)
+    def visualize_sample(actual_idx, tag, out_name):
+        """Predict and plot one sample (global index) with GT / pred / error fields."""
+        x_input = x_data[actual_idx].unsqueeze(0).to(device)
+        y_true_phys = y_data[actual_idx].unsqueeze(0).to(device)
 
-    for row_idx, cfg in enumerate(plot_configs):
-        var_idx, cmap = cfg['idx'], cfg['cmap']
-        gt, pred, e = y_true[var_idx], y_pred[var_idx], err[var_idx]
-        
-        l2_err = np.linalg.norm(e) / (np.linalg.norm(gt) + 1e-8)
-        vmin, vmax = min(gt.min(), pred.min()), max(np.percentile(gt, 99), np.percentile(pred, 99))
+        with torch.no_grad():
+            x_encoded = x_norm.encode(x_input)
+            if data_mode == 'coord':
+                branch = x_encoded[:, 2:5, 0, 0]
+                trunk = x_encoded[0, 0:2].permute(1, 2, 0).reshape(-1, 2)
+                pred_encoded = model(branch, trunk).reshape(1, 4, *x_encoded.shape[2:])
+            else:
+                pred_encoded = model(x_encoded)
+            y_pred_log = y_norm.decode(pred_encoded)
 
-        ax1 = fig.add_subplot(gs[row_idx, 0])
-        im1 = ax1.pcolormesh(Grid_X, Grid_Y, gt, cmap=cmap, shading='gouraud', vmin=vmin, vmax=vmax)
-        ax1.set_title(f"GT {cfg['name']}"); ax1.axis('equal'); ax1.axis('off'); plt.colorbar(im1, ax=ax1)
+        y_pred_phys = y_pred_log.clone()
+        y_pred_phys[:, 3, :, :] = torch.pow(10, y_pred_log[:, 3, :, :])
+        error = torch.abs(y_true_phys - y_pred_phys)
 
-        ax2 = fig.add_subplot(gs[row_idx, 1])
-        im2 = ax2.pcolormesh(Grid_X, Grid_Y, pred, cmap=cmap, shading='gouraud', vmin=vmin, vmax=vmax)
-        ax2.set_title(f"Pred {cfg['name']}"); ax2.axis('equal'); ax2.axis('off'); plt.colorbar(im2, ax=ax2)
+        x_np, y_true, y_pred, err = to_np(x_input), to_np(y_true_phys), to_np(y_pred_phys), to_np(error)
+        Grid_X, Grid_Y = x_np[0], x_np[1]
 
-        ax3 = fig.add_subplot(gs[row_idx, 2])
-        im3 = ax3.pcolormesh(Grid_X, Grid_Y, e, cmap='inferno', shading='gouraud')
-        ax3.set_title(f"Error (Rel L2={l2_err:.1%})"); ax3.axis('equal'); ax3.axis('off'); plt.colorbar(im3, ax=ax3)
+        fourier_text = ("Coordinate-based" if data_mode == 'coord'
+                        else "With Fourier" if checkpoint_fourier else "No Fourier")
+        title_str = f"{args.model.upper()} | {tag} (Global Idx: {actual_idx}) | {fourier_text}"
+        plot_configs = [{'name': 'Velocity u (m/s)', 'idx': 1, 'cmap': 'jet'},
+                        {'name': 'Pressure p (Pa)', 'idx': 3, 'cmap': 'magma'}]
 
-    # Extract wall curves
-    wall_idx = 2
-    wall_x = Grid_X[wall_idx, :]
-    ax_wall = fig.add_subplot(gs[2, :])
-    ax_wall.plot(wall_x, y_true[3][wall_idx, :], 'k-', lw=2.5, label='CFD Ground Truth')
-    ax_wall.plot(wall_x, y_pred[3][wall_idx, :], 'r--', lw=2.5, label=f'{args.model.upper()} Pred ({fourier_text})')
-    ax_wall.set_title(f"Near-Wall Pressure Distribution (Benchmark Case)")
-    ax_wall.set_xlabel("X (m)"); ax_wall.set_ylabel("Pressure (Pa)"); ax_wall.legend(); ax_wall.grid(True, alpha=0.3)
+        fig = plt.figure(figsize=(18, 14))
+        gs = fig.add_gridspec(3, 3)
+        plt.suptitle(title_str, fontsize=16)
 
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    output_img = os.path.join(args.output_dir, "inference_benchmark.png")
-    plt.savefig(output_img, dpi=150)
-    print(f"Saved visualization to: {output_img}")
+        for row_idx, cfg in enumerate(plot_configs):
+            var_idx, cmap = cfg['idx'], cfg['cmap']
+            gt, pred, e = y_true[var_idx], y_pred[var_idx], err[var_idx]
+
+            l2_err = np.linalg.norm(e) / (np.linalg.norm(gt) + 1e-8)
+            vmin, vmax = min(gt.min(), pred.min()), max(np.percentile(gt, 99), np.percentile(pred, 99))
+
+            ax1 = fig.add_subplot(gs[row_idx, 0])
+            im1 = ax1.pcolormesh(Grid_X, Grid_Y, gt, cmap=cmap, shading='gouraud', vmin=vmin, vmax=vmax)
+            ax1.set_title(f"GT {cfg['name']}"); ax1.axis('equal'); ax1.axis('off'); plt.colorbar(im1, ax=ax1)
+
+            ax2 = fig.add_subplot(gs[row_idx, 1])
+            im2 = ax2.pcolormesh(Grid_X, Grid_Y, pred, cmap=cmap, shading='gouraud', vmin=vmin, vmax=vmax)
+            ax2.set_title(f"Pred {cfg['name']}"); ax2.axis('equal'); ax2.axis('off'); plt.colorbar(im2, ax=ax2)
+
+            ax3 = fig.add_subplot(gs[row_idx, 2])
+            im3 = ax3.pcolormesh(Grid_X, Grid_Y, e, cmap='inferno', shading='gouraud')
+            ax3.set_title(f"Error (Rel L2={l2_err:.1%})"); ax3.axis('equal'); ax3.axis('off'); plt.colorbar(im3, ax=ax3)
+
+        # Wall pressure curves
+        wall_idx = 2
+        wall_x = Grid_X[wall_idx, :]
+        ax_wall = fig.add_subplot(gs[2, :])
+        ax_wall.plot(wall_x, y_true[3][wall_idx, :], 'k-', lw=2.5, label='CFD Ground Truth')
+        ax_wall.plot(wall_x, y_pred[3][wall_idx, :], 'r--', lw=2.5, label=f'{args.model.upper()} Pred ({fourier_text})')
+        ax_wall.set_title(f"Near-Wall Pressure Distribution ({tag})")
+        ax_wall.set_xlabel("X (m)"); ax_wall.set_ylabel("Pressure (Pa)"); ax_wall.legend(); ax_wall.grid(True, alpha=0.3)
+
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+        output_img = os.path.join(args.output_dir, out_name)
+        plt.savefig(output_img, dpi=150)
+        plt.close(fig)
+        print(f"Saved visualization to: {output_img}")
+
+    # Benchmark Case: global index 50, unchanged (train sample, literature benchmark)
+    print(f"Extracting Benchmark Case (Global Idx {args.sample_idx}).")
+    visualize_sample(args.sample_idx, "Benchmark Case", "inference_benchmark.png")
+
+    # Test sample: drawn from the test set (same seeded split as training, no leakage)
+    if not (0 <= args.test_sample_idx < len(test_idx)):
+        raise ValueError(f"--test_sample_idx {args.test_sample_idx} out of range: "
+                         f"test set has {len(test_idx)} samples (0..{len(test_idx)-1})")
+    test_global_idx = test_idx[args.test_sample_idx].item()
+    print(f"Extracting test sample (test_idx[{args.test_sample_idx}] -> Global Idx {test_global_idx}).")
+    visualize_sample(test_global_idx, "Test Sample", "inference_test.png")
 
 if __name__ == "__main__":
     main()

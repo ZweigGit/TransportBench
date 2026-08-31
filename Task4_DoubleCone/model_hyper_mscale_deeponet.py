@@ -5,7 +5,7 @@ Branch net outputs all trunk parameters — one FNN per scale (weights + biases)
 one output layer, and one learnable log-scale factor. No learned parameters in
 the trunk — every weight, bias, and the scale comes from the branch output at
 runtime. Trunk sub-network outputs are stacked directly (no fusion layer), so
-trunk feature dim = n_scales * trunk_hidden (same design as MscaleDeepONet).
+trunk feature dim = n_scales * out_dim (same design as MscaleDeepONet).
 """
 
 import torch
@@ -53,17 +53,23 @@ class HyperMscaleDeepONet(nn.Module):
         branch_dim:   Input dimension of the branch net (sensor values).
         trunk_dim:    Input dimension of the trunk net (coordinates).
         hidden_dim:   Width of the branch net hidden layers.
-        trunk_hidden: Width of each per-scale trunk FNN (trunk feature dim =
-                      n_scales * trunk_hidden, must match or error).
+        trunk_hidden: Width of each per-scale trunk FNN hidden layers (trunk
+                      feature dim = n_scales * out_dim, where out_dim =
+                      basis_size // n_scales, or trunk_hidden if basis_size
+                      is None).
         num_outputs:  Number of output channels.
         depth:        Number of hidden layers in the branch net.
         trunk_depth:  Number of hidden layers in each per-scale trunk FNN.
         scales:       Frequency scaling factors for the trunk.
         activation:   'GELU' or 'Tanh' (branch activation; trunk always uses B-spline).
+        basis_size:   Number of trunk basis functions (= trunk feature dim,
+                      n_scales * out_dim). Sets each sub-network's OUTPUT
+                      width (basis_size // n_scales); hidden width stays
+                      trunk_hidden. Must be divisible by n_scales.
     """
     def __init__(self, branch_dim=3, trunk_dim=2, hidden_dim=68, trunk_hidden=68,
                  num_outputs=4, depth=4, trunk_depth=4, scales=None,
-                 activation='GELU'):
+                 activation='GELU', basis_size=None):
         super().__init__()
 
         if activation == 'GELU':
@@ -77,19 +83,25 @@ class HyperMscaleDeepONet(nn.Module):
             scales = [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0]
         n_scales = len(scales)
 
+        # basis_size = number of trunk basis functions = trunk feature dim.
+        # It sets each sub-network's OUTPUT width (basis_size // n_scales),
+        # leaving the hidden width (trunk_hidden) untouched.
+        out_dim = None
+        if basis_size is not None:
+            if basis_size % n_scales != 0:
+                raise ValueError(
+                    f"basis_size {basis_size} must be divisible by n_scales {n_scales}"
+                )
+            out_dim = basis_size // n_scales
+
         self.num_outputs = num_outputs
 
         # --- Compute total parameters needed to construct the hyper-trunk ---
-        # Per-scale trunk FNN: [trunk_dim] + [trunk_hidden] * trunk_depth
-        scale_dims = [trunk_dim] + [trunk_hidden] * (trunk_depth - 1) + [trunk_hidden]
-        trunk_feat_dim = n_scales * trunk_hidden
-
-        # Check: sub-network output dim * n_scales must equal trunk feature dim
-        if trunk_feat_dim != n_scales * trunk_hidden:
-            raise ValueError(
-                f"Trunk feature dim {trunk_feat_dim} != sub-network output "
-                f"({trunk_hidden}) * n_scales ({n_scales})"
-            )
+        # Per-scale trunk FNN: [trunk_dim] + [trunk_hidden]*trunk_depth + [out_dim]
+        if out_dim is None:
+            out_dim = trunk_hidden
+        scale_dims = [trunk_dim] + [trunk_hidden] * trunk_depth + [out_dim]
+        trunk_feat_dim = n_scales * out_dim
 
         trunk_params = n_scales * _compute_weight_bias(scale_dims)
 

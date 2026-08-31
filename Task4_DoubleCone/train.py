@@ -37,9 +37,9 @@ def build_model(model_name, use_fourier):
     elif model_name == 'unet': return FluidUNet(in_channels=5, out_channels=4, features=64, use_fourier=use_fourier)
     elif model_name == 'vit': return VisionTransformer(in_channels=5, out_channels=4, embed_dim=512, depth=10, use_fourier=use_fourier)
     # Coordinate-based (branch = Mach/Temp/Re, trunk = x/y grid coords)
-    elif model_name == 'hyperdeeponet': return HyperDeepONet(branch_dim=3, trunk_dim=2, hidden_dim=256, num_outputs=4, trunk_depth=3, branch_depth=4, activation='GELU')
-    elif model_name == 'mscale_deeponet': return MscaleDeepONet(branch_dim=3, trunk_dim=2, branch_hidden=2048, trunk_hidden=256, num_outputs=4, branch_depth=5, trunk_depth=8, activation='GELU')
-    elif model_name == 'hyper_mscale_deeponet': return HyperMscaleDeepONet(branch_dim=3, trunk_dim=2, hidden_dim=128, trunk_hidden=128, num_outputs=4, depth=4, trunk_depth=3, activation='GELU')
+    elif model_name == 'hyperdeeponet': return HyperDeepONet(branch_hidden=128, trunk_hidden=256, trunk_depth=4, branch_depth=4, basis_size=256)
+    elif model_name == 'mscale_deeponet': return MscaleDeepONet(branch_hidden=2048, branch_depth=4, trunk_hidden=512, trunk_depth=4, basis_size=2048)
+    elif model_name == 'hyper_mscale_deeponet': return HyperMscaleDeepONet(hidden_dim=128, depth=4, trunk_hidden=128, trunk_depth=3, basis_size=256)
 
 def main():
     args = get_args()

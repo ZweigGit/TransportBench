@@ -12,9 +12,17 @@ import torch.nn as nn
 
 class HyperDeepONet(nn.Module):
     def __init__(self, branch_dim=3, trunk_dim=2, hidden_dim=78,
+                 branch_hidden=None, trunk_hidden=None,
                  num_outputs=4, trunk_depth=3, branch_depth=3,
-                 activation='GELU'):
+                 activation='GELU', basis_size=None):
         super().__init__()
+
+        # Branch and trunk widths are independent knobs; hidden_dim is the
+        # shared default for both.
+        if branch_hidden is None:
+            branch_hidden = hidden_dim
+        if trunk_hidden is None:
+            trunk_hidden = hidden_dim
 
         if activation == 'Tanh':
             act = nn.Tanh
@@ -25,8 +33,13 @@ class HyperDeepONet(nn.Module):
         else:
             raise ValueError(f"Unsupported activation: {activation}")
 
-        # Trunk architecture: [trunk_dim, hidden, ..., hidden, num_outputs]
-        self.trunk_dims = [trunk_dim] + [hidden_dim] * trunk_depth + [num_outputs]
+        # Trunk architecture: [trunk_dim, trunk_hidden, ..., basis_size, num_outputs]
+        # basis_size = width of the last trunk layer (basis functions combined
+        # by the output layer). None keeps all hidden layers at trunk_hidden.
+        if basis_size is None:
+            self.trunk_dims = [trunk_dim] + [trunk_hidden] * trunk_depth + [num_outputs]
+        else:
+            self.trunk_dims = [trunk_dim] + [trunk_hidden] * trunk_depth + [basis_size, num_outputs]
 
         # Total parameters needed to construct the trunk net
         t_para = 0
@@ -34,7 +47,7 @@ class HyperDeepONet(nn.Module):
             t_para += self.trunk_dims[i] * self.trunk_dims[i + 1] + self.trunk_dims[i + 1]
 
         # Branch: single network → t_para (trunk weights/biases)
-        branch_dims = [branch_dim] + [hidden_dim] * branch_depth + [t_para]
+        branch_dims = [branch_dim] + [branch_hidden] * branch_depth + [t_para]
         self.branch_net = _MLP(branch_dims, act)
 
         self.num_outputs = num_outputs
