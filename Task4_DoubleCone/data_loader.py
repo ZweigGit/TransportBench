@@ -30,6 +30,31 @@ class GaussianNormalizer:
         self.mean = state_dict['mean']
         self.std = state_dict['std']
 
+def get_split_indices(n_total):
+    """
+    Train/test split with fixed seed 42.
+    Shared by train and eval to guarantee the same test set.
+    Returns: (train_idx, test_idx)
+    """
+    if n_total == 51:
+        n_train = 45
+        n_test = 6
+        print(">>> Detected Full 51 Cases! Using 45 Train / 6 Test split. <<<")
+    elif n_total == 32:
+        n_train = 28
+        n_test = 4
+        print(">>> Warning: Only detected 32 Cases! Using 28 Train / 4 Test split. <<<")
+    else:
+        n_test = max(1, int(n_total * 0.1))
+        n_train = n_total - n_test
+        print(f">>> Detected {n_total} Cases. Using {n_train} Train / {n_test} Test. <<<")
+
+    g_cpu = torch.Generator()
+    g_cpu.manual_seed(42)
+    indices = torch.randperm(n_total, generator=g_cpu)
+
+    return indices[:n_train], indices[n_train:]
+
 def get_dataloader_and_stats(data_path, batch_size, device):
     """
     Load dataset and compute normalization statistics
@@ -52,27 +77,8 @@ def get_dataloader_and_stats(data_path, batch_size, device):
     y_std = torch.std(y_data, dim=(0, 2, 3), keepdim=True)
     
     n_total = x_data.shape[0]
-    
-    if n_total == 51:
-        n_train = 45
-        n_test = 6
-        print(">>> Detected Full 51 Cases! Using 45 Train / 6 Test split. <<<")
-    elif n_total == 32:
-        n_train = 28
-        n_test = 4
-        print(">>> Warning: Only detected 32 Cases! Using 28 Train / 4 Test split. <<<")
-    else:
-        n_test = max(1, int(n_total * 0.1))
-        n_train = n_total - n_test
-        print(f">>> Detected {n_total} Cases. Using {n_train} Train / {n_test} Test. <<<")
-    
-    g_cpu = torch.Generator()
-    g_cpu.manual_seed(42)
-    indices = torch.randperm(n_total, generator=g_cpu)
-    
-    train_idx = indices[:n_train]
-    test_idx = indices[n_train:]
-    
+    train_idx, test_idx = get_split_indices(n_total)
+
     print(f"Dataset Split -> Total: {n_total} | Train: {len(train_idx)} | Test: {len(test_idx)}")
 
     x_train, y_train = x_data[train_idx].to(device), y_data[train_idx].to(device)

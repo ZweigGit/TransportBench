@@ -3,6 +3,7 @@ import torch.nn as nn
 import time
 import os
 import argparse
+from tqdm import tqdm
 from data_loader import get_dataloader_and_stats
 
 from model_ae import AutoEncoder2d
@@ -51,6 +52,7 @@ def main():
     train_loader, test_loader, x_norm, y_norm = get_dataloader_and_stats(args.data_path, args.batch_size, device)
     
     model = build_model(args.model, use_fourier).to(device)
+    log(f"Model Parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.2f} M")
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
 
     # Warmup: Peak learning rate at 40% of training
@@ -63,7 +65,9 @@ def main():
     best_test_loss = float('inf')
     best_test_epoch = -1
 
-    for ep in range(args.epochs):
+    log("Training Started...")
+    pbar = tqdm(range(args.epochs), desc="Training")
+    for ep in pbar:
         model.train()
         train_loss_val = 0.0
 
@@ -115,6 +119,14 @@ def main():
                 test_loss_val += raw_test_loss.mean().item()
                 
         test_loss_val /= len(test_loader)
+
+        pbar.set_postfix({
+            'train': f'{train_loss_val:.4g}',
+            'test': f'{test_loss_val:.4g}',
+            'best': f'{best_test_loss:.4g}' if best_test_epoch >= 0 else 'n/a',
+            'lr': f'{scheduler.get_last_lr()[0]:.2e}',
+            'w_wall': f'{w_wall:.1f}',
+        })
 
         if ep % 50 == 0 or ep == args.epochs - 1:
             log(f"Ep {ep:04d} | LR: {scheduler.get_last_lr()[0]:.1e} | Train: {train_loss_val:.4g} | Test(Pure): {test_loss_val:.4g} | W_wall: {w_wall:.1f}")

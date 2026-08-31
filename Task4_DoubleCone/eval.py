@@ -1,10 +1,11 @@
 import os
 import argparse
 import torch
+import torch.nn as nn
 import numpy as np
 import matplotlib.pyplot as plt
 
-from data_loader import GaussianNormalizer
+from data_loader import GaussianNormalizer, get_split_indices
 from model_deeponet import DeepONet2d
 from model_fno import FNO2d
 from model_unet import FluidUNet
@@ -83,8 +84,43 @@ def main():
         model = PointTransformer(in_channels=5, out_channels=4, latent_dim=512, num_latents=1024, depth=10, use_fourier=checkpoint_fourier)
     
     model = model.to(device)
-    model.load_state_dict(checkpoint.get('model_state', checkpoint)) 
+    model.load_state_dict(checkpoint.get('model_state', checkpoint))
     model.eval()
+
+    # Evaluate metrics on the test set (same split as training)
+    train_idx, test_idx = get_split_indices(x_data.shape[0])
+    x_test = x_data[test_idx].to(device)
+    y_test_phys = y_data[test_idx].to(device)
+
+    criterion_mae = nn.L1Loss(reduction='sum')
+    criterion_mse = nn.MSELoss(reduction='sum')
+    total_mae, total_mse, total_l2_error = 0.0, 0.0, 0.0
+
+    print(f"\nEvaluating on {len(test_idx)} test samples...")
+    with torch.no_grad():
+        bs = 8
+        for s in range(0, x_test.shape[0], bs):
+            pred_enc = model(x_norm.encode(x_test[s:s+bs]))
+            y_pred = y_norm.decode(pred_enc)
+            y_pred[:, 3, :, :] = torch.pow(10, y_pred[:, 3, :, :])
+            y_true = y_test_phys[s:s+bs]
+
+            total_mae += criterion_mae(y_pred, y_true).item()
+            total_mse += criterion_mse(y_pred, y_true).item()
+            l2_err = torch.norm((y_pred - y_true).flatten(1), dim=1) / \
+                     (torch.norm(y_true.flatten(1), dim=1) + 1e-8)
+            total_l2_error += l2_err.sum().item()
+
+    final_mae = total_mae / y_test_phys.numel()
+    final_mse = total_mse / y_test_phys.numel()
+    final_rel_l2 = total_l2_error / len(test_idx)
+
+    print("-" * 50)
+    print(f"Final Results for {args.model.upper()}:")
+    print(f"Mean Absolute Error (MAE) : {final_mae:.4g}")
+    print(f"Mean Squared Error (MSE)  : {final_mse:.4g}")
+    print(f"Relative L2 Error (RL2E)  : {final_rel_l2:.4g}")
+    print("-" * 50)
 
     # Extract benchmark sample
     actual_idx = args.sample_idx
