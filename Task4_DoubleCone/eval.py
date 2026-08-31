@@ -5,7 +5,7 @@ import torch.nn as nn
 import numpy as np
 import matplotlib.pyplot as plt
 
-from data_loader import GaussianNormalizer, get_split_indices
+from data_loader import MinMaxNormalizer, get_split_indices
 from model_deeponet import DeepONet2d
 from model_fno import FNO2d
 from model_unet import FluidUNet
@@ -61,13 +61,18 @@ def main():
     y_data_log = y_data.clone()
     y_data_log[:, 3, :, :] = torch.log10(y_data[:, 3, :, :] + 1e-6)
     
-    x_mean = torch.mean(x_data, dim=(0, 2, 3), keepdim=True).to(device)
-    x_std = torch.std(x_data, dim=(0, 2, 3), keepdim=True).to(device)
-    y_mean = torch.mean(y_data_log, dim=(0, 2, 3), keepdim=True).to(device)
-    y_std = torch.std(y_data_log, dim=(0, 2, 3), keepdim=True).to(device)
-    
-    x_norm = GaussianNormalizer(mean=x_mean, std=x_std)
-    y_norm = GaussianNormalizer(mean=y_mean, std=y_std)
+    # Same seeded split as training; stats computed on TRAIN split only (no test leakage)
+    train_idx, test_idx = get_split_indices(x_data.shape[0])
+
+    x_train = x_data[train_idx]
+    y_train = y_data_log[train_idx]
+    x_min = torch.amin(x_train, dim=(0, 2, 3), keepdim=True).to(device)
+    x_max = torch.amax(x_train, dim=(0, 2, 3), keepdim=True).to(device)
+    y_min = torch.amin(y_train, dim=(0, 2, 3), keepdim=True).to(device)
+    y_max = torch.amax(y_train, dim=(0, 2, 3), keepdim=True).to(device)
+
+    x_norm = MinMaxNormalizer(min_val=x_min, max_val=x_max)
+    y_norm = MinMaxNormalizer(min_val=y_min, max_val=y_max)
 
     # Load model and weights
     checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
@@ -92,38 +97,45 @@ def main():
     model.eval()
 
     # Evaluate metrics on the test set (same split as training)
-    train_idx, test_idx = get_split_indices(x_data.shape[0])
     x_test = x_data[test_idx].to(device)
     y_test_phys = y_data[test_idx].to(device)
+    y_test_log = y_test_phys.clone()
+    y_test_log[:, 3] = torch.log10(y_test_phys[:, 3] + 1e-6)  # only pressure in log10 space (as trained)
 
     criterion_mae = nn.L1Loss(reduction='sum')
     criterion_mse = nn.MSELoss(reduction='sum')
-    total_mae, total_mse, total_l2_error = 0.0, 0.0, 0.0
+    total_mae, total_mse = 0.0, 0.0
+    total_log_l2, total_p_log_l2 = 0.0, 0.0
 
     print(f"\nEvaluating on {len(test_idx)} test samples...")
     with torch.no_grad():
         bs = 8
         for s in range(0, x_test.shape[0], bs):
             pred_enc = model(x_norm.encode(x_test[s:s+bs]))
-            y_pred = y_norm.decode(pred_enc)
-            y_pred[:, 3, :, :] = torch.pow(10, y_pred[:, 3, :, :])
-            y_true = y_test_phys[s:s+bs]
+            y_pred_log = y_norm.decode(pred_enc)  # rho/u/v physical, pressure in log10
+            y_true_log = y_test_log[s:s+bs]
 
-            total_mae += criterion_mae(y_pred, y_true).item()
-            total_mse += criterion_mse(y_pred, y_true).item()
-            l2_err = torch.norm((y_pred - y_true).flatten(1), dim=1) / \
-                     (torch.norm(y_true.flatten(1), dim=1) + 1e-8)
-            total_l2_error += l2_err.sum().item()
+            total_mae += criterion_mae(y_pred_log, y_true_log).item()
+            total_mse += criterion_mse(y_pred_log, y_true_log).item()
 
-    final_mae = total_mae / y_test_phys.numel()
-    final_mse = total_mse / y_test_phys.numel()
-    final_rel_l2 = total_l2_error / len(test_idx)
+            log_l2 = torch.norm((y_pred_log - y_true_log).flatten(1), dim=1) / \
+                     (torch.norm(y_true_log.flatten(1), dim=1) + 1e-8)
+            p_log_l2 = torch.norm((y_pred_log[:, 3:4] - y_true_log[:, 3:4]).flatten(1), dim=1) / \
+                       (torch.norm(y_true_log[:, 3:4].flatten(1), dim=1) + 1e-8)
+            total_log_l2 += log_l2.sum().item()
+            total_p_log_l2 += p_log_l2.sum().item()
+
+    final_mae = total_mae / y_test_log.numel()
+    final_mse = total_mse / y_test_log.numel()
+    final_log_l2 = total_log_l2 / len(test_idx)
+    final_p_log_l2 = total_p_log_l2 / len(test_idx)
 
     print("-" * 50)
-    print(f"Final Results for {args.model.upper()}:")
+    print(f"Final Results for {args.model.upper()} (log space, p=log10):")
     print(f"Mean Absolute Error (MAE) : {final_mae:.4g}")
     print(f"Mean Squared Error (MSE)  : {final_mse:.4g}")
-    print(f"Relative L2 Error (RL2E)  : {final_rel_l2:.4g}")
+    print(f"Relative L2 Error (RL2E)  : {final_log_l2:.4g}")
+    print(f"RL2E (pressure, log10)    : {final_p_log_l2:.4g}")
     print("-" * 50)
 
     # Extract benchmark sample

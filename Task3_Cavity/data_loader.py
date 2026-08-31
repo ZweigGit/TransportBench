@@ -61,16 +61,14 @@ class CavityDataset(Dataset):
         self.inputs = np.stack(input_list, axis=0)      # (99, 50, 50, 3)
         self.targets = np.stack(target_list, axis=0)    # (99, 50, 50, 10)
         
-        self.target_mean = np.mean(self.targets, axis=(0,1,2))
-        self.target_std = np.std(self.targets, axis=(0,1,2)) + 1e-6
-        
-        self.targets_norm = (self.targets - self.target_mean) / self.target_std
-        
+        # Min-max normalization: per-channel stats computed on TRAIN split only (no test leakage)
         kn_min, kn_max = 0.02, 1.0
         self.inputs[..., 0] = (self.inputs[..., 0] - kn_min) / (kn_max - kn_min)
 
         self.inputs_tensor = torch.tensor(self.inputs, dtype=torch.float32)
-        self.targets_tensor = torch.tensor(self.targets_norm, dtype=torch.float32)
+        self.targets_tensor = torch.tensor(self.targets, dtype=torch.float32)
+        self.target_min = None
+        self.target_max = None
         
         print(f"done!: Input {self.inputs_tensor.shape}, Target {self.targets_tensor.shape}")
 
@@ -79,6 +77,17 @@ class CavityDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.inputs_tensor[idx], self.targets_tensor[idx]
+
+    def fit_train_normalizer(self, train_indices):
+        """Compute per-channel min/max on train split only, normalize targets to [0,1] in place."""
+        train = self.targets[np.array(train_indices)]
+        self.target_min = train.min(axis=(0, 1, 2))
+        self.target_max = train.max(axis=(0, 1, 2))
+        rng = self.target_max - self.target_min
+        rng = np.where(rng < 1e-12, 1.0, rng)
+        self.targets_norm = (self.targets - self.target_min) / rng
+        self.targets_tensor = torch.tensor(self.targets_norm, dtype=torch.float32)
+        print(f"Train-only min-max applied: {len(train_indices)} train samples.")
 
 if __name__ == "__main__":
     ds = CavityDataset()

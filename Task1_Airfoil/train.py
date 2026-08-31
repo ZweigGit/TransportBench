@@ -67,6 +67,7 @@ def main():
     train_size = int(0.8 * len(dataset))
     test_size = len(dataset) - train_size
     train_data, test_data = random_split(dataset, [train_size, test_size], generator=torch.Generator().manual_seed(42))
+    dataset.fit_train_normalizer(train_data.indices)
 
     # For coordinate-based models, wrap subsets to expose original indices for mask lookup
     if data_mode != 'fno':

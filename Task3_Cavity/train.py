@@ -40,6 +40,7 @@ def main():
     train_size = int(0.8 * len(dataset))
     test_size = len(dataset) - train_size
     train_data, test_data = random_split(dataset, [train_size, test_size], generator=torch.Generator().manual_seed(42))
+    dataset.fit_train_normalizer(train_data.indices)
     
     train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
     test_loader = DataLoader(test_data, batch_size=args.batch_size, shuffle=False)

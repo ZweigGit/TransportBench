@@ -5,30 +5,30 @@ Compatible with original data_utils.py logic
 import torch
 from torch.utils.data import TensorDataset, DataLoader
 
-class GaussianNormalizer:
-    """Gaussian normalization for inputs and outputs"""
-    def __init__(self, mean, std):
-        self.mean = mean
-        self.std = std
+class MinMaxNormalizer:
+    """Min-max normalization to [0,1], stats from train split only"""
+    def __init__(self, min_val, max_val):
+        self.min = min_val
+        self.max = max_val
         self.eps = 1e-6
-    
+
     def encode(self, x):
-        return (x - self.mean) / (self.std + self.eps)
-    
+        return (x - self.min) / (self.max - self.min + self.eps)
+
     def decode(self, x):
-        return x * (self.std + self.eps) + self.mean
-    
+        return x * (self.max - self.min + self.eps) + self.min
+
     def to(self, device):
-        self.mean = self.mean.to(device)
-        self.std = self.std.to(device)
+        self.min = self.min.to(device)
+        self.max = self.max.to(device)
         return self
-    
+
     def state_dict(self):
-        return {'mean': self.mean, 'std': self.std}
-    
+        return {'min': self.min, 'max': self.max}
+
     def load_state_dict(self, state_dict):
-        self.mean = state_dict['mean']
-        self.std = state_dict['std']
+        self.min = state_dict['min']
+        self.max = state_dict['max']
 
 def get_split_indices(n_total):
     """
@@ -69,17 +69,19 @@ def get_dataloader_and_stats(data_path, batch_size, device):
     
     print("Applying Standard Log10-transform to Pressure channel (Index 3)...")
     y_data[:, 3, :, :] = torch.log10(y_data[:, 3, :, :] + 1e-6)
-    
-    print("Computing Gaussian statistics...")
-    x_mean = torch.mean(x_data, dim=(0, 2, 3), keepdim=True)
-    x_std = torch.std(x_data, dim=(0, 2, 3), keepdim=True)
-    y_mean = torch.mean(y_data, dim=(0, 2, 3), keepdim=True)
-    y_std = torch.std(y_data, dim=(0, 2, 3), keepdim=True)
-    
+
     n_total = x_data.shape[0]
     train_idx, test_idx = get_split_indices(n_total)
 
     print(f"Dataset Split -> Total: {n_total} | Train: {len(train_idx)} | Test: {len(test_idx)}")
+
+    # Min-max statistics computed on TRAIN split only (no test leakage)
+    print("Computing min-max statistics on train split...")
+    x_train_raw, y_train_raw = x_data[train_idx], y_data[train_idx]
+    x_min = torch.amin(x_train_raw, dim=(0, 2, 3), keepdim=True)
+    x_max = torch.amax(x_train_raw, dim=(0, 2, 3), keepdim=True)
+    y_min = torch.amin(y_train_raw, dim=(0, 2, 3), keepdim=True)
+    y_max = torch.amax(y_train_raw, dim=(0, 2, 3), keepdim=True)
 
     x_train, y_train = x_data[train_idx].to(device), y_data[train_idx].to(device)
     x_test, y_test = x_data[test_idx].to(device), y_data[test_idx].to(device)
@@ -87,7 +89,7 @@ def get_dataloader_and_stats(data_path, batch_size, device):
     train_loader = DataLoader(TensorDataset(x_train, y_train), batch_size=batch_size, shuffle=True)
     test_loader = DataLoader(TensorDataset(x_test, y_test), batch_size=batch_size, shuffle=False)
 
-    x_norm = GaussianNormalizer(x_mean, x_std).to(device)
-    y_norm = GaussianNormalizer(y_mean, y_std).to(device)
+    x_norm = MinMaxNormalizer(x_min, x_max).to(device)
+    y_norm = MinMaxNormalizer(y_min, y_max).to(device)
 
     return train_loader, test_loader, x_norm, y_norm

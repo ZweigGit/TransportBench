@@ -35,7 +35,8 @@ def main():
     dataset = CavityDataset(data_dir=args.data_dir, mode='test', model_type='fno')
     train_size = int(0.8 * len(dataset))
     test_size = len(dataset) - train_size
-    _, test_data = random_split(dataset, [train_size, test_size], generator=torch.Generator().manual_seed(42))
+    train_data, test_data = random_split(dataset, [train_size, test_size], generator=torch.Generator().manual_seed(42))
+    dataset.fit_train_normalizer(train_data.indices)
     test_loader = DataLoader(test_data, batch_size=1, shuffle=False)
 
     if args.model == 'fno':
@@ -83,11 +84,11 @@ def main():
             total_l2_error += l2_err.item()
 
             if i == 0:
-                mean = torch.tensor(dataset.target_mean, device=device).view(1, 1, 1, 10)
-                std = torch.tensor(dataset.target_std, device=device).view(1, 1, 1, 10)
-                
-                pred_real = pred * std + mean
-                target_real = y * std + mean
+                tmin = torch.tensor(dataset.target_min, device=device).view(1, 1, 1, 10)
+                rng = torch.tensor(dataset.target_max - dataset.target_min, device=device).view(1, 1, 1, 10)
+
+                pred_real = pred * rng + tmin
+                target_real = y * rng + tmin
                 
                 plot_pred = pred_real[0].cpu().numpy()
                 plot_gt = target_real[0].cpu().numpy()
