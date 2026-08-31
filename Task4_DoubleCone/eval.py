@@ -19,7 +19,7 @@ def get_args():
                         help='Choose the model to evaluate')
     parser.add_argument('--no_fourier', action='store_true',
                         help='Model does not use Fourier encoding')
-    parser.add_argument('--data_path', type=str, default='./data/double_cone_dataset_with_physics.pt', 
+    parser.add_argument('--data_path', type=str, default='../data/double_cone_dataset_with_physics.pt',
                         help='Path to dataset')
     parser.add_argument('--checkpoint', type=str, default='./checkpoints/best_model_{}.pth', 
                         help='Path format to checkpoint')
@@ -88,7 +88,7 @@ def main():
 
     # Extract benchmark sample
     actual_idx = args.sample_idx
-    print(f"🎯 Successfully extracted Benchmark Case (Global Idx {actual_idx}).")
+    print(f"Successfully extracted Benchmark Case (Global Idx {actual_idx}).")
 
     x_input = x_data[actual_idx].unsqueeze(0).to(device)
     y_true_phys = y_data[actual_idx].unsqueeze(0).to(device)
