@@ -22,11 +22,12 @@ def get_args():
                         help='Model does not use Fourier encoding')
     parser.add_argument('--data_path', type=str, default='../data/double_cone_dataset_with_physics.pt',
                         help='Path to dataset')
-    parser.add_argument('--checkpoint', type=str, default='./checkpoints/best_model_{}.pth', 
-                        help='Path format to checkpoint')
-    parser.add_argument('--sample_idx', type=int, default=50, 
+    parser.add_argument('--checkpoint', type=str, default=None,
+                        help='Path to checkpoint (default: output/<model><_fourier|_nofourier>/best_model.pth)')
+    parser.add_argument('--sample_idx', type=int, default=50,
                         help='Global sample index to visualize (Default: 50 for Benchmark Case)')
-    parser.add_argument('--output_dir', type=str, default='./output', help='Directory to save')
+    parser.add_argument('--output_dir', type=str, default=None,
+                        help='Directory to save (default: output/<model><_fourier|_nofourier>)')
     return parser.parse_args()
 
 def main():
@@ -35,16 +36,19 @@ def main():
     fourier_suffix = "_fourier" if use_fourier else "_nofourier"
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
+    run_name = args.model + fourier_suffix
+
+    # Per-model output subdirectory, aligned with Task I convention
+    if args.output_dir is None:
+        args.output_dir = os.path.join('output', run_name)
     os.makedirs(args.output_dir, exist_ok=True)
 
     # Locate checkpoint
-    ckpt_path = args.checkpoint.format(args.model + fourier_suffix) 
+    if args.checkpoint is None:
+        args.checkpoint = os.path.join('output', run_name, 'best_model.pth')
+    ckpt_path = args.checkpoint
     if not os.path.exists(ckpt_path):
-        ckpt_path_fallback = args.checkpoint.format(args.model)
-        if os.path.exists(ckpt_path_fallback):
-            ckpt_path = ckpt_path_fallback
-        else:
-            raise FileNotFoundError(f"Checkpoint not found for {args.model}! Checked: {ckpt_path}")
+        raise FileNotFoundError(f"Checkpoint not found for {args.model}! Checked: {ckpt_path}")
             
     print(f"Loading checkpoint from: {ckpt_path}")
 
@@ -182,7 +186,7 @@ def main():
     ax_wall.set_xlabel("X (m)"); ax_wall.set_ylabel("Pressure (Pa)"); ax_wall.legend(); ax_wall.grid(True, alpha=0.3)
 
     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    output_img = os.path.join(args.output_dir, f"inference_{args.model}{fourier_suffix}_benchmark.png")
+    output_img = os.path.join(args.output_dir, "inference_benchmark.png")
     plt.savefig(output_img, dpi=150)
     print(f"Saved visualization to: {output_img}")
 

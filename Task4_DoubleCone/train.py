@@ -3,6 +3,8 @@ import torch.nn as nn
 import time
 import os
 import argparse
+import numpy as np
+import matplotlib.pyplot as plt
 from tqdm import tqdm
 from data_loader import get_dataloader_and_stats
 
@@ -38,9 +40,11 @@ def main():
     use_fourier = not args.no_fourier
     fourier_suffix = "_fourier" if use_fourier else "_nofourier"
     
-    if not os.path.exists(args.save_dir): os.makedirs(args.save_dir)
-    save_path = os.path.join(args.save_dir, f'best_model_{args.model}{fourier_suffix}.pth')
-    log_file = os.path.join(args.save_dir, f'train_{args.model}{fourier_suffix}.log')
+    # Per-model output subdirectory, aligned with Task I convention
+    args.save_dir = os.path.join('output', args.model + fourier_suffix)
+    os.makedirs(args.save_dir, exist_ok=True)
+    save_path = os.path.join(args.save_dir, 'best_model.pth')
+    log_file = os.path.join(args.save_dir, 'train.log')
 
     def log(msg):
         print(msg)
@@ -64,6 +68,7 @@ def main():
     loss_fn = nn.L1Loss(reduction='none')
     best_test_loss = float('inf')
     best_test_epoch = -1
+    history = {'train_loss': [], 'test_loss': []}
 
     log("Training Started...")
     pbar = tqdm(range(args.epochs), desc="Training")
@@ -104,6 +109,7 @@ def main():
             train_loss_val += loss.item()
 
         train_loss_val /= len(train_loader)
+        history['train_loss'].append(train_loss_val)
 
         # Evaluation
         model.eval()
@@ -119,6 +125,7 @@ def main():
                 test_loss_val += raw_test_loss.mean().item()
                 
         test_loss_val /= len(test_loader)
+        history['test_loss'].append(test_loss_val)
 
         pbar.set_postfix({
             'train': f'{train_loss_val:.4g}',
@@ -147,6 +154,25 @@ def main():
                 log(f"  >>> [SAVED] Epoch {ep:04d} | Golden Best Test Loss: {best_test_loss:.6f} <<<")
 
     log(f"Finished. Golden Best Test Loss: {best_test_loss:.6f} discovered at Epoch {best_test_epoch}")
+
+    # Save loss history for visualization plotting
+    np.save(os.path.join(args.save_dir, 'history.npy'), history)
+
+    # Save loss curve plot
+    fig_path = os.path.join(args.save_dir, 'loss_curve.png')
+    plt.figure(figsize=(8, 5))
+    plt.plot(history['train_loss'], label='Train', alpha=0.8)
+    plt.plot(history['test_loss'], label='Test', alpha=0.8)
+    plt.yscale('log')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title(f'{args.model.upper()}{fourier_suffix} Loss Curve')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(fig_path, dpi=150)
+    plt.close()
+    log(f"Loss curve saved to {fig_path}")
 
 if __name__ == "__main__":
     main()
