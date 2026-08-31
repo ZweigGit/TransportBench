@@ -137,6 +137,18 @@ def main():
     print(f"RL2E (pressure, log10)    : {final_p_rel_l2:.4g}")
     print("-" * 50)
 
+    # Save eval results
+    eval_file = os.path.join(args.output_dir, 'eval_results.txt')
+    with open(eval_file, 'w', encoding='utf-8') as f:
+        f.write(f"Model       : {args.model.upper()} ({'fourier' if use_fourier else 'nofourier'})\n")
+        f.write(f"Checkpoint  : {ckpt_path}\n")
+        f.write(f"Metric space: normalized [0,1] (p=log10)\n")
+        f.write(f"MAE         : {final_mae:.4g}\n")
+        f.write(f"MSE         : {final_mse:.4g}\n")
+        f.write(f"RL2E        : {final_rel_l2:.4g}\n")
+        f.write(f"RL2E (p,log10): {final_p_rel_l2:.4g}\n")
+    print(f"Saved eval results to: {eval_file}")
+
     # Extract benchmark sample
     actual_idx = args.sample_idx
     print(f"Successfully extracted Benchmark Case (Global Idx {actual_idx}).")

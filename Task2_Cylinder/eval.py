@@ -162,6 +162,17 @@ def main():
     print(f"Relative L2 Error         : {final_rel_l2:.4g}")
     print("-" * 50)
 
+    # Save eval results
+    eval_file = os.path.join(args.output_dir, 'eval_results.txt')
+    with open(eval_file, 'w', encoding='utf-8') as f:
+        f.write(f"Model       : {args.model.upper()}\n")
+        f.write(f"Checkpoint  : {ckpt_path}\n")
+        f.write(f"Metric space: normalized [0,1]\n")
+        f.write(f"MAE         : {final_mae:.4g}\n")
+        f.write(f"MSE         : {final_mse:.4g}\n")
+        f.write(f"RL2E        : {final_rel_l2:.4g}\n")
+    print(f"Saved eval results to: {eval_file}")
+
     # 5. Generate visualizations for multiple samples and variables
     print(f"\nGenerating visualizations for {len(samples_to_plot)} samples...")
 

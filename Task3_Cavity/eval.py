@@ -21,6 +21,7 @@ def get_args():
                         choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt'], help='Choose model')
     parser.add_argument('--data_dir', type=str, default='./data/cavity', help='Path to .npz data')
     parser.add_argument('--checkpoint', type=str, default='./checkpoints/best_model_{}.pth', help='Path to weights')
+    parser.add_argument('--output_dir', type=str, default=None, help='Directory to save results (default: output/<model>)')
     return parser.parse_args()
 
 def main():
@@ -31,6 +32,10 @@ def main():
     if args.model == 'pt': device = 'cpu'
         
     print(f"📊 Starting Evaluation | Model: {args.model.upper()} | Device: {device}")
+
+    if args.output_dir is None:
+        args.output_dir = os.path.join('output', args.model)
+    os.makedirs(args.output_dir, exist_ok=True)
 
     dataset = CavityDataset(data_dir=args.data_dir, mode='test', model_type='fno')
     train_size = int(0.8 * len(dataset))
@@ -99,6 +104,16 @@ def main():
 
     print("-" * 50)
     print(f"🏆 Results for {args.model.upper()}: MAE = {final_mae:.4g} | Rel L2 = {final_rel_l2*100:.2f}%")
+
+    # Save eval results
+    eval_file = os.path.join(args.output_dir, 'eval_results.txt')
+    with open(eval_file, 'w', encoding='utf-8') as f:
+        f.write(f"Model       : {args.model.upper()}\n")
+        f.write(f"Checkpoint  : {ckpt_path}\n")
+        f.write(f"Metric space: normalized [0,1]\n")
+        f.write(f"MAE         : {final_mae:.4g}\n")
+        f.write(f"Rel L2      : {final_rel_l2*100:.2f}%\n")
+    print(f"Saved eval results to: {eval_file}")
 
     nx, ny = dataset.nx, dataset.ny
     vx = np.linspace(0, 1, nx)
