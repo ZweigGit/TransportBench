@@ -6,15 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from data_loader import MinMaxNormalizer, get_split_indices
-from model_deeponet import DeepONet2d
-from model_fno import FNO2d
-from model_unet import FluidUNet
-from model_vit import VisionTransformer
-from model_ae import AutoEncoder2d
-from model_pt import PointTransformer
-from model_hyperdeeponet import HyperDeepONet
-from model_mscale_deeponet import MscaleDeepONet
-from model_hyper_mscale_deeponet import HyperMscaleDeepONet
+from train import build_model  # single source of model configs, keeps eval in sync with train
 
 def get_args():
     parser = argparse.ArgumentParser(description="Evaluation for Task 4: Double Cone Flow")
@@ -85,26 +77,7 @@ def main():
     cfg = checkpoint.get('config', {})
     checkpoint_fourier = cfg.get('use_fourier', use_fourier)
     
-    if args.model == 'fno':
-        model = FNO2d(modes1=8, modes2=64, width=64, in_channels=5, out_channels=4, use_fourier=checkpoint_fourier)
-    elif args.model == 'unet':
-        model = FluidUNet(in_channels=5, out_channels=4, features=64, use_fourier=checkpoint_fourier)
-    elif args.model == 'vit':
-        model = VisionTransformer(in_channels=5, out_channels=4, embed_dim=512, depth=10, use_fourier=checkpoint_fourier)
-    elif args.model == 'ae':
-        model = AutoEncoder2d(in_channels=5, out_channels=4, features=128, use_fourier=checkpoint_fourier)
-    elif args.model == 'deeponet':
-        model = DeepONet2d(in_channels=5, out_channels=4, basis_size=256, use_fourier=checkpoint_fourier)
-    elif args.model == 'pt':
-        model = PointTransformer(in_channels=5, out_channels=4, latent_dim=512, num_latents=1024, depth=10, use_fourier=checkpoint_fourier)
-    elif args.model == 'hyperdeeponet':
-        model = HyperDeepONet(branch_dim=3, trunk_dim=2, hidden_dim=78, num_outputs=4, trunk_depth=3, branch_depth=3, activation='GELU')
-    elif args.model == 'mscale_deeponet':
-        model = MscaleDeepONet(branch_dim=3, trunk_dim=2, branch_hidden=256, trunk_hidden=256, num_outputs=4, scales=[1, 2, 4, 8, 16, 32, 64, 128], branch_depth=4, trunk_depth=4, activation='GELU')
-    elif args.model == 'hyper_mscale_deeponet':
-        model = HyperMscaleDeepONet(branch_dim=3, trunk_dim=2, hidden_dim=68, trunk_hidden=68, num_outputs=4, depth=4, trunk_depth=4, activation='GELU')
-
-    model = model.to(device)
+    model = build_model(args.model, checkpoint_fourier).to(device)
     model.load_state_dict(checkpoint.get('model_state', checkpoint))
     model.eval()
 
