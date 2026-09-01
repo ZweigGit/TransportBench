@@ -11,7 +11,7 @@ from train import build_model  # single source of model configs, keeps eval in s
 def get_args():
     parser = argparse.ArgumentParser(description="Evaluation for Task 4: Double Cone Flow")
     parser.add_argument('--model', type=str, required=True,
-                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet'],
+                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet'],
                         help='Choose the model to evaluate')
     parser.add_argument('--no_fourier', action='store_true',
                         help='Model does not use Fourier encoding')
@@ -32,7 +32,7 @@ def main():
     use_fourier = not args.no_fourier
     fourier_suffix = "_fourier" if use_fourier else "_nofourier"
     # Coordinate-based DeepONet variants take (branch, trunk); no fourier encoding
-    coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet'}
+    coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet'}
     data_mode = 'coord' if args.model in coord_models else 'grid'
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 

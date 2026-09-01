@@ -3,7 +3,7 @@
 from train import build_model
 
 names = ['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit',
-         'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet']
+         'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet']
 
 print(f"{'model':<22} {'params':>10}")
 print("-" * 34)

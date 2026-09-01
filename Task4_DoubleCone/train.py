@@ -17,10 +17,11 @@ from model_vit import VisionTransformer
 from model_hyperdeeponet import HyperDeepONet
 from model_mscale_deeponet import MscaleDeepONet
 from model_hyper_mscale_deeponet import HyperMscaleDeepONet
+from model_c_hyperdeeponet import c_HyperDeepONet
 
 def get_args():
     parser = argparse.ArgumentParser(description="Universal Golden Protocol Training Script")
-    parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet'])
+    parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet'])
     parser.add_argument('--data_path', type=str, default='../data/double_cone_dataset_with_physics.pt')
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--epochs', type=int, default=2500)
@@ -40,13 +41,17 @@ def build_model(model_name, use_fourier):
     elif model_name == 'hyperdeeponet': return HyperDeepONet(branch_hidden=128, trunk_hidden=256, trunk_depth=4, branch_depth=4, basis_size=256)
     elif model_name == 'mscale_deeponet': return MscaleDeepONet(branch_hidden=2048, branch_depth=4, trunk_hidden=512, trunk_depth=4, basis_size=2048)
     elif model_name == 'hyper_mscale_deeponet': return HyperMscaleDeepONet(hidden_dim=128, depth=4, trunk_hidden=128, trunk_depth=3, basis_size=256)
+    # Chunked hypernetwork: same generated trunk as HyperDeepONet (t_para=264,964) but emitted
+    # in 512-wide chunks from a small branch (0.85M vs 34.2M)
+    elif model_name == 'c_hyperdeeponet': return c_HyperDeepONet(trunk_hidden_dim=2048, branch_hidden_dim=2048, num_basis=1024,
+                                                                 trunk_depth=4, branch_depth=4, chunk_in=2048, chunk_out=2048)
 
 def main():
     args = get_args()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     use_fourier = not args.no_fourier
     # Coordinate-based DeepONet variants take (branch, trunk) instead of a grid image
-    coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet'}
+    coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet'}
     data_mode = 'coord' if args.model in coord_models else 'grid'
     fourier_suffix = "" if data_mode == 'coord' else ("_fourier" if use_fourier else "_nofourier")
 
