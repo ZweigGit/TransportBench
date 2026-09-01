@@ -103,7 +103,8 @@ def main():
                 # Branch = flow params (ch 2-4), trunk = shared grid coords (ch 0-1)
                 branch = x_enc_batch[:, 2:5, 0, 0]
                 trunk = x_norm.encode(x_test[0:1])[0, 0:2].permute(1, 2, 0).reshape(-1, 2)
-                pred_enc = model(branch, trunk).reshape(x_enc_batch.shape[0], 4, *x_enc_batch.shape[2:])
+                # Model outputs [B, N, 4] (point-major, channel-last): transpose, not reshape
+                pred_enc = model(branch, trunk).permute(0, 2, 1).reshape(x_enc_batch.shape[0], 4, *x_enc_batch.shape[2:])
             else:
                 pred_enc = model(x_enc_batch)
             y_enc = y_norm.encode(y_test_log[s:s+bs])  # target in normalized [0,1] space
@@ -156,7 +157,8 @@ def main():
             if data_mode == 'coord':
                 branch = x_encoded[:, 2:5, 0, 0]
                 trunk = x_encoded[0, 0:2].permute(1, 2, 0).reshape(-1, 2)
-                pred_encoded = model(branch, trunk).reshape(1, 4, *x_encoded.shape[2:])
+                # Model outputs [B, N, 4] (point-major, channel-last): transpose, not reshape
+                pred_encoded = model(branch, trunk).permute(0, 2, 1).reshape(1, 4, *x_encoded.shape[2:])
             else:
                 pred_encoded = model(x_encoded)
             y_pred_log = y_norm.decode(pred_encoded)
