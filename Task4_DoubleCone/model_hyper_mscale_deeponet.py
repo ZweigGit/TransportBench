@@ -2,11 +2,11 @@
 HyperMscaleDeepONet: HyperDeepONet with a multi-scale stacked trunk.
 
 Branch net outputs all trunk parameters — one FNN per scale (weights + biases),
-one output layer, and one learnable log-scale factor. No learned parameters in
-the trunk FNNs — every weight and bias comes from the branch output at runtime.
-The per-scale frequency factors are learnable log-parameters themselves
-(exp applied for positivity, initialized from `scales`), alongside the
-branch-generated global log-scale.
+one output layer, the per-scale frequency factors, and a global log-scale
+factor. No learned parameters in the trunk FNNs — every weight, bias, and
+scale comes from the branch output at runtime. The per-scale frequency factors
+are branch outputs themselves (exp applied for positivity, final-layer bias
+initialized from `scales` so training starts at the given frequencies).
 Trunk sub-network outputs are stacked directly (no fusion layer), so trunk
 feature dim = n_scales * out_dim (same design as MscaleDeepONet).
 """
@@ -50,7 +50,8 @@ class HyperMscaleDeepONet(nn.Module):
     """HyperDeepONet with a multi-scale stacked trunk — branch net outputs all trunk parameters.
 
     Branch net outputs one trunk FNN per scale (weights + biases), one output
-    layer, and one learnable log-scale factor. No learned parameters in the trunk.
+    layer, the per-scale frequency factors, and one global log-scale factor.
+    No learned parameters in the trunk.
 
     Args:
         branch_dim:   Input dimension of the branch net (sensor values).
@@ -63,9 +64,10 @@ class HyperMscaleDeepONet(nn.Module):
         num_outputs:  Number of output channels.
         depth:        Number of hidden layers in the branch net.
         trunk_depth:  Number of hidden layers in each per-scale trunk FNN.
-        scales:       Initial values of the learnable per-scale frequency
-                      factors (stored as log-parameters with exp applied, so
-                      always positive; trained alongside the branch net).
+        scales:       Initial values of the per-scale frequency factors. The
+                      branch net outputs their log-values (exp applied, so
+                      always positive); its final-layer bias is initialized to
+                      log(scales) so training starts at these frequencies.
         activation:   'GELU' or 'Tanh' (branch activation; trunk always uses B-spline).
         basis_size:   Number of trunk basis functions (= trunk feature dim,
                       n_scales * out_dim). Sets each sub-network's OUTPUT
@@ -114,17 +116,24 @@ class HyperMscaleDeepONet(nn.Module):
         output_dims = [trunk_feat_dim, num_outputs]
         output_params = _compute_weight_bias(output_dims)
 
-        t_para = trunk_params + output_params + 1  # +1 for log_scale
+        # +n_scales for per-scale frequency factors, +1 for global log_scale
+        t_para = trunk_params + output_params + n_scales + 1
 
         # --- Branch net ---
         self.branch_net = _MLP([branch_dim] + [hidden_dim] * depth + [t_para], act)
 
-        # --- Stash shapes and scales for trunk forward ---
+        # --- Stash shapes for trunk forward ---
         self._scale_dims = scale_dims
         self._output_dims = output_dims
-        # Learnable per-scale factors, log-parameterized for positivity;
-        # initialized from the given scales (scale = exp(log_scales))
-        self.log_scales = nn.Parameter(torch.log(torch.tensor(scales, dtype=torch.float32)))
+        self._n_scales = n_scales
+        # Init the branch's per-scale factor outputs to log(scales) with zero
+        # input dependence, so training starts at the given frequencies.
+        # Per-scale slots are the n_scales positions just before the global
+        # log_scale (index -1); the global log_scale keeps its random init.
+        with torch.no_grad():
+            final = self.branch_net.net[-1]
+            final.weight[-n_scales - 1:-1, :] = 0.0
+            final.bias[-n_scales - 1:-1] = torch.log(torch.tensor(scales, dtype=torch.float32))
 
     @staticmethod
     def _apply_layer(params, x, d_in, d_out, start, act_fn=None):
@@ -143,26 +152,28 @@ class HyperMscaleDeepONet(nn.Module):
     def _trunk_forward(self, params, x_trunk):
         """Hypernetwork trunk forward using branch-provided weights/biases.
 
-        params: [B, t_para] — flattened trunk weights, biases, and log_scale
+        params: [B, t_para] — flattened trunk weights, biases, per-scale
+        log-factors, and global log_scale
         x_trunk: [N, trunk_dim] or [B, N, trunk_dim]
         """
         if x_trunk.dim() == 2:
             x_trunk = x_trunk.unsqueeze(0)  # [1, N, trunk_dim]
         B = params.shape[0]
 
-        # --- Extract log_scale from end of params ---
-        log_scale = params[:, -1:]  # [B, 1]
-        scale = torch.exp(log_scale)  # [B, 1], >0 guaranteed
+        # --- Extract global log_scale and per-scale factors from params end ---
+        tail = params[:, -self._n_scales - 1:]  # [B, n_scales + 1]
+        global_log_scale = tail[:, -1:]          # [B, 1]
+        per_scale_logs = tail[:, :-1]            # [B, n_scales]
 
-        # Apply scale to input coordinates
-        y = scale.view(B, 1, 1) * x_trunk  # [B, N, trunk_dim]
+        # Apply global scale to input coordinates
+        y = global_log_scale.view(B, 1, 1) * x_trunk  # [B, N, trunk_dim]
 
         # --- Per-scale trunk FNNs, outputs stacked (no fusion) ---
-        # exp() of log-parameters keeps the per-scale factors positive
+        # exp() of branch-provided log-factors keeps the scales positive
         start = 0
         outs = []
-        for log_s in self.log_scales:
-            y_s = y * torch.exp(log_s)
+        for s in range(self._n_scales):
+            y_s = y * torch.exp(per_scale_logs[:, s:s + 1]).view(B, 1, 1)  # [B,1,1] broadcast
             for i in range(len(self._scale_dims) - 1):
                 d_in = self._scale_dims[i]
                 d_out = self._scale_dims[i + 1]

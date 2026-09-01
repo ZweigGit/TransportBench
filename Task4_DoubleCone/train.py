@@ -55,10 +55,11 @@ def main():
     os.makedirs(args.save_dir, exist_ok=True)
     save_path = os.path.join(args.save_dir, 'best_model.pth')
     log_file = os.path.join(args.save_dir, 'train.log')
+    # Overwrite (not append) so each run's log reflects only that run
 
     def log(msg):
         print(msg)
-        with open(log_file, 'a') as f: f.write(msg + '\n')
+        with open(log_file, 'w') as f: f.write(msg + '\n')
 
     log(f"=== Training {args.model.upper()} | Fourier: {use_fourier} | Device: {device} ===")
     log("Strategy: TIME-DILATED GOLDEN PROTOCOL (Peak LR @ 40%, Weights start @ Ep800)")
