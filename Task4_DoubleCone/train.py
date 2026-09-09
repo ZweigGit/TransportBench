@@ -43,8 +43,8 @@ def build_model(model_name, use_fourier):
     elif model_name == 'hyper_mscale_deeponet': return HyperMscaleDeepONet(hidden_dim=128, depth=4, trunk_hidden=128, trunk_depth=3, basis_size=256)
     # Chunked hypernetwork: same generated trunk as HyperDeepONet (t_para=264,964) but emitted
     # in 512-wide chunks from a small branch (0.85M vs 34.2M)
-    elif model_name == 'c_hyperdeeponet': return c_HyperDeepONet(trunk_hidden_dim=2048, branch_hidden_dim=2048, num_basis=1024,
-                                                                 trunk_depth=4, branch_depth=4, chunk_in=2048, chunk_out=2048)
+    elif model_name == 'c_hyperdeeponet': return c_HyperDeepONet(trunk_hidden_dim=2048, branch_hidden_dim=2048, num_basis=2048,
+                                                                 trunk_depth=5, branch_depth=5, chunk_in=512, chunk_out=8192)
 
 def main():
     args = get_args()
