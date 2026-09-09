@@ -124,13 +124,12 @@ class c_HyperDeepONet(nn.Module):
 
 
 class _MLP(nn.Module):
-    """Fully-connected stack: Linear -> LN -> Act -> ... -> Linear (LN like DeepONet2d)."""
+    """Simple fully-connected stack: Linear → Act → ... → Linear."""
     def __init__(self, dims, act):
         super().__init__()
         layers = []
         for i in range(len(dims) - 2):
             layers.append(nn.Linear(dims[i], dims[i + 1]))
-            layers.append(nn.LayerNorm(dims[i + 1]))
             layers.append(act())
         layers.append(nn.Linear(dims[-2], dims[-1]))
         self.net = nn.Sequential(*layers)
