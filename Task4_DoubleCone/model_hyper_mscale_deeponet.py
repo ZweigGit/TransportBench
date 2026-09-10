@@ -87,7 +87,7 @@ class HyperMscaleDeepONet(nn.Module):
             raise ValueError(f"Unsupported activation: {activation}")
 
         if scales is None:
-            scales = [1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0]
+            scales = [1.0, 2.0, 4.0, 8.0]
         n_scales = len(scales)
 
         # basis_size = number of trunk basis functions = trunk feature dim.

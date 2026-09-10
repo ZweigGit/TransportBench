@@ -40,7 +40,7 @@ def build_model(model_name, use_fourier):
     # Coordinate-based (branch = Mach/Temp/Re, trunk = x/y grid coords)
     elif model_name == 'hyperdeeponet': return HyperDeepONet(branch_hidden=128, trunk_hidden=256, trunk_depth=4, branch_depth=4, basis_size=256)
     elif model_name == 'mscale_deeponet': return MscaleDeepONet(branch_hidden=2048, branch_depth=5, trunk_hidden=1024, trunk_depth=5, basis_size=256)
-    elif model_name == 'hyper_mscale_deeponet': return HyperMscaleDeepONet(hidden_dim=128, depth=4, trunk_hidden=128, trunk_depth=3, basis_size=256)
+    elif model_name == 'hyper_mscale_deeponet': return HyperMscaleDeepONet(hidden_dim=128, depth=4, trunk_hidden=128, trunk_depth=4, basis_size=512)
     # Chunked hypernetwork: same generated trunk as HyperDeepONet (t_para=264,964) but emitted
     # in 512-wide chunks from a small branch (0.85M vs 34.2M)
     elif model_name == 'c_hyperdeeponet': return c_HyperDeepONet(trunk_hidden_dim=2048, branch_hidden_dim=2048, num_basis=2048,
