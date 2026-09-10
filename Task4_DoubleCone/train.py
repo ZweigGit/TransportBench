@@ -18,10 +18,11 @@ from model_hyperdeeponet import HyperDeepONet
 from model_mscale_deeponet import MscaleDeepONet
 from model_hyper_mscale_deeponet import HyperMscaleDeepONet
 from model_c_hyperdeeponet import c_HyperDeepONet
+from model_c_hyper_mscale_deeponet import c_HyperMscaleDeepONet
 
 def get_args():
     parser = argparse.ArgumentParser(description="Universal Golden Protocol Training Script")
-    parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet'])
+    parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet'])
     parser.add_argument('--data_path', type=str, default='../data/double_cone_dataset_with_physics.pt')
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--epochs', type=int, default=2500)
@@ -45,6 +46,8 @@ def build_model(model_name, use_fourier):
     # in 512-wide chunks from a small branch (0.85M vs 34.2M)
     elif model_name == 'c_hyperdeeponet': return c_HyperDeepONet(trunk_hidden_dim=2048, branch_hidden_dim=2048, num_basis=2048,
                                                                  trunk_depth=5, branch_depth=5, chunk_in=512, chunk_out=8192)
+    elif model_name == 'c_hyper_mscale_deeponet': return c_HyperMscaleDeepONet(hidden_dim=128, depth=4, trunk_hidden=128, trunk_depth=4,
+                                                                              basis_size=512, chunk_in=512, chunk_out=8192)
 
 def main():
     args = get_args()
