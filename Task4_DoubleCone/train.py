@@ -46,15 +46,15 @@ def build_model(model_name, use_fourier):
     # in 512-wide chunks from a small branch (0.85M vs 34.2M)
     elif model_name == 'c_hyperdeeponet': return c_HyperDeepONet(trunk_hidden_dim=2048, branch_hidden_dim=2048, num_basis=2048,
                                                                  trunk_depth=5, branch_depth=5, chunk_in=512, chunk_out=8192)
-    elif model_name == 'c_hyper_mscale_deeponet': return c_HyperMscaleDeepONet(hidden_dim=128, depth=4, trunk_hidden=128, trunk_depth=4,
-                                                                              basis_size=512, chunk_in=512, chunk_out=8192)
+    elif model_name == 'c_hyper_mscale_deeponet': return c_HyperMscaleDeepONet(hidden_dim=2048, depth=5, trunk_hidden=1024, trunk_depth=5,
+                                                                              basis_size=2048, chunk_in=512, chunk_out=8192)
 
 def main():
     args = get_args()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     use_fourier = not args.no_fourier
     # Coordinate-based DeepONet variants take (branch, trunk) instead of a grid image
-    coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet'}
+    coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet'}
     data_mode = 'coord' if args.model in coord_models else 'grid'
     fourier_suffix = "" if data_mode == 'coord' else ("_fourier" if use_fourier else "_nofourier")
 
