@@ -33,21 +33,21 @@ def get_args():
 
 def build_model(model_name, use_fourier):
     if model_name == 'ae': return AutoEncoder2d(in_channels=5, out_channels=4, features=128, use_fourier=use_fourier)
-    elif model_name == 'deeponet': return DeepONet2d(in_channels=5, out_channels=4,hidden_width=1024, basis_size=256, use_fourier=use_fourier)
+    elif model_name == 'deeponet': return DeepONet2d(in_channels=5, out_channels=4,hidden_width=316, basis_size=128, use_fourier=use_fourier)
     elif model_name == 'fno': return FNO2d(modes1=8, modes2=64, width=64, in_channels=5, out_channels=4, use_fourier=use_fourier)
     elif model_name == 'pt': return PointTransformer(in_channels=5, out_channels=4, latent_dim=512, num_latents=1024, depth=10, use_fourier=use_fourier)
     elif model_name == 'unet': return FluidUNet(in_channels=5, out_channels=4, features=64, use_fourier=use_fourier)
     elif model_name == 'vit': return VisionTransformer(in_channels=5, out_channels=4, embed_dim=512, depth=10, use_fourier=use_fourier)
     # Coordinate-based (branch = Mach/Temp/Re, trunk = x/y grid coords)
-    elif model_name == 'hyperdeeponet': return HyperDeepONet(branch_hidden=128, trunk_hidden=128, trunk_depth=4, branch_depth=4, basis_size=256)
-    elif model_name == 'mscale_deeponet': return MscaleDeepONet(branch_hidden=1024, branch_depth=5, trunk_hidden=512, trunk_depth=5, basis_size=256)
-    elif model_name == 'hyper_mscale_deeponet': return HyperMscaleDeepONet(hidden_dim=128, depth=5, trunk_hidden=64, trunk_depth=5, basis_size=256)
+    elif model_name == 'hyperdeeponet': return HyperDeepONet(branch_hidden=45, trunk_hidden=64, trunk_depth=4, branch_depth=4, basis_size=128)
+    elif model_name == 'mscale_deeponet': return MscaleDeepONet(branch_hidden=200, branch_depth=5, trunk_hidden=200, trunk_depth=5, basis_size=128)
+    elif model_name == 'hyper_mscale_deeponet': return HyperMscaleDeepONet(hidden_dim=55, depth=4, trunk_hidden=32, trunk_depth=4, basis_size=128)
     # Chunked hypernetwork: same generated trunk as HyperDeepONet (t_para=264,964) but emitted
     # in 512-wide chunks from a small branch (0.85M vs 34.2M)
-    elif model_name == 'c_hyperdeeponet': return c_HyperDeepONet(trunk_hidden_dim=1024, branch_hidden_dim=1024, num_basis=1024,
-                                                                 trunk_depth=5, branch_depth=5, chunk_in=512, chunk_out=512)
-    elif model_name == 'c_hyper_mscale_deeponet': return c_HyperMscaleDeepONet(hidden_dim=1024, depth=5, trunk_hidden=512, trunk_depth=5,
-                                                                              basis_size=1024, chunk_in=512, chunk_out=512)
+    elif model_name == 'c_hyperdeeponet': return c_HyperDeepONet(trunk_hidden_dim=256, branch_hidden_dim=350, num_basis=256,
+                                                                 trunk_depth=5, branch_depth=5, chunk_in=256, chunk_out=1024)
+    elif model_name == 'c_hyper_mscale_deeponet': return c_HyperMscaleDeepONet(hidden_dim=300, depth=5, trunk_hidden=256, trunk_depth=5,
+                                                                              basis_size=256, chunk_in=256, chunk_out=1024)
 
 def main():
     args = get_args()
