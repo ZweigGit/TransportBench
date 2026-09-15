@@ -31,12 +31,14 @@ def main():
     args = get_args()
     use_fourier = not args.no_fourier
     fourier_suffix = "_fourier" if use_fourier else "_nofourier"
-    # Coordinate-based DeepONet variants take (branch, trunk); no fourier encoding
+    # Coordinate-based DeepONet variants take (branch, trunk)
     coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet'}
     data_mode = 'coord' if args.model in coord_models else 'grid'
+    # Coord variants without a Fourier option get no suffix (only hyperdeeponet supports it)
+    fourierless = coord_models - {'hyperdeeponet'}
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    run_name = args.model + ('' if data_mode == 'coord' else fourier_suffix)
+    run_name = args.model + ('' if args.model in fourierless else fourier_suffix)
 
     # Per-model output subdirectory, aligned with Task I convention
     if args.output_dir is None:
@@ -135,7 +137,7 @@ def main():
     # Save eval results
     eval_file = os.path.join(args.output_dir, 'eval_results.txt')
     with open(eval_file, 'w', encoding='utf-8') as f:
-        f.write(f"Model       : {args.model.upper()} ({'coordinate-based' if data_mode == 'coord' else 'fourier' if use_fourier else 'nofourier'})\n")
+        f.write(f"Model       : {args.model.upper()} ({'coordinate-based' if args.model in fourierless else 'fourier' if checkpoint_fourier else 'nofourier'})\n")
         f.write(f"Checkpoint  : {ckpt_path}\n")
         f.write(f"Metric space: normalized [0,1] (p=log10)\n")
         f.write(f"MAE         : {final_mae:.4g}\n")
@@ -170,7 +172,7 @@ def main():
         x_np, y_true, y_pred, err = to_np(x_input), to_np(y_true_phys), to_np(y_pred_phys), to_np(error)
         Grid_X, Grid_Y = x_np[0], x_np[1]
 
-        fourier_text = ("Coordinate-based" if data_mode == 'coord'
+        fourier_text = ("Coordinate-based" if args.model in fourierless
                         else "With Fourier" if checkpoint_fourier else "No Fourier")
         title_str = f"{args.model.upper()} | {tag} (Global Idx: {actual_idx}) | {fourier_text}"
         plot_configs = [{'name': 'Velocity u (m/s)', 'idx': 1, 'cmap': 'jet'},

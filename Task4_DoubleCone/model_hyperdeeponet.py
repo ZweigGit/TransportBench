@@ -9,13 +9,17 @@ Key ideas from Lee & Shin:
 import torch
 import torch.nn as nn
 
+from model_deeponet import PositionalEncoding
+
 
 class HyperDeepONet(nn.Module):
     def __init__(self, branch_dim=3, trunk_dim=2, hidden_dim=78,
                  branch_hidden=None, trunk_hidden=None,
                  num_outputs=4, trunk_depth=3, branch_depth=3,
-                 activation='GELU', basis_size=None):
+                 activation='GELU', basis_size=None, use_fourier=False):
         super().__init__()
+
+        self.use_fourier = use_fourier
 
         # Branch and trunk widths are independent knobs; hidden_dim is the
         # shared default for both.
@@ -33,13 +37,18 @@ class HyperDeepONet(nn.Module):
         else:
             raise ValueError(f"Unsupported activation: {activation}")
 
-        # Trunk architecture: [trunk_dim, trunk_hidden, ..., basis_size, num_outputs]
+        # Trunk architecture: [trunk_in, trunk_hidden, ..., basis_size, num_outputs]
         # basis_size = width of the last trunk layer (basis functions combined
         # by the output layer). None keeps all hidden layers at trunk_hidden.
-        if basis_size is None:
-            self.trunk_dims = [trunk_dim] + [trunk_hidden] * trunk_depth + [num_outputs]
+        if self.use_fourier:
+            self.pe = PositionalEncoding(in_dim=trunk_dim, num_freqs=10)
+            trunk_in = self.pe.out_dim
         else:
-            self.trunk_dims = [trunk_dim] + [trunk_hidden] * trunk_depth + [basis_size, num_outputs]
+            trunk_in = trunk_dim
+        if basis_size is None:
+            self.trunk_dims = [trunk_in] + [trunk_hidden] * trunk_depth + [num_outputs]
+        else:
+            self.trunk_dims = [trunk_in] + [trunk_hidden] * trunk_depth + [basis_size, num_outputs]
 
         # Total parameters needed to construct the trunk net
         t_para = 0
@@ -98,6 +107,8 @@ class HyperDeepONet(nn.Module):
         Returns:
             [B, N, num_outputs]
         """
+        if self.use_fourier:
+            x_trunk = self.pe(x_trunk)
         params = self._branch_forward(x_branch)  # [B, t_para]
         return self._trunk_forward(params, x_trunk)
 
