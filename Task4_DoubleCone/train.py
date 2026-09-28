@@ -20,10 +20,11 @@ from model_hyper_mscale_deeponet import HyperMscaleDeepONet
 from model_c_hyperdeeponet import c_HyperDeepONet
 from model_c_hyper_mscale_deeponet import c_HyperMscaleDeepONet
 from model_fusion_deeponet import Fusion_DeepONet
+from model_wavelet_mscale_deeponet import WaveletMscaleDeepONet
 
 def get_args():
     parser = argparse.ArgumentParser(description="Universal Golden Protocol Training Script")
-    parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet'])
+    parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'wavelet_mscale_deeponet'])
     parser.add_argument('--data_path', type=str, default='../data/double_cone_dataset_with_physics.pt')
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--epochs', type=int, default=2500)
@@ -52,13 +53,17 @@ def build_model(model_name, use_fourier):
     # 1,010,312 params (~1.01M budget), branch [3,278,...,278,1112], trunk [2,278,...,278,278]
     elif model_name == 'fusion_deeponet': return Fusion_DeepONet(branch_dim=3, trunk_dim=2, hidden_dim=278, num_outputs=4,
                                                                  depth=5, activation='GELU')
+    # Frozen tensor-product wavelet MRA trunk (db6 pair, 3232 atoms, 4 dyadic
+    # levels); only the branch coefficient net trains (~1.01M params)
+    elif model_name == 'wavelet_mscale_deeponet': return WaveletMscaleDeepONet(branch_dim=3, trunk_dim=2, hidden_dim=76, num_outputs=4,
+                                                                               depth=4, levels=4, activation='GELU')
 
 def main():
     args = get_args()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     use_fourier = not args.no_fourier
     # Coordinate-based DeepONet variants take (branch, trunk) instead of a grid image
-    coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet'}
+    coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'wavelet_mscale_deeponet'}
     data_mode = 'coord' if args.model in coord_models else 'grid'
     # Coord variants without a Fourier option get no suffix (only hyperdeeponet supports it)
     fourierless = coord_models - {'hyperdeeponet'}

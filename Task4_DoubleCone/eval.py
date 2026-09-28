@@ -11,7 +11,7 @@ from train import build_model  # single source of model configs, keeps eval in s
 def get_args():
     parser = argparse.ArgumentParser(description="Evaluation for Task 4: Double Cone Flow")
     parser.add_argument('--model', type=str, required=True,
-                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet'],
+                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'wavelet_mscale_deeponet'],
                         help='Choose the model to evaluate')
     parser.add_argument('--no_fourier', action='store_true',
                         help='Model does not use Fourier encoding')
@@ -32,7 +32,7 @@ def main():
     use_fourier = not args.no_fourier
     fourier_suffix = "_fourier" if use_fourier else "_nofourier"
     # Coordinate-based DeepONet variants take (branch, trunk)
-    coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet'}
+    coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'wavelet_mscale_deeponet'}
     data_mode = 'coord' if args.model in coord_models else 'grid'
     # Coord variants without a Fourier option get no suffix (only hyperdeeponet supports it)
     fourierless = coord_models - {'hyperdeeponet'}
