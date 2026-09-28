@@ -14,18 +14,28 @@ dilated/translated on the dyadic grid with the s^-1/2 factor
 normalization (the 2D tensor normalization is the product of the two
 factor normalizations).
 
-The dictionary is parameter-free and frozen, so - like the precomputed_basis
-philosophy of the reference project - the only trainable part is the branch
-net (sensors -> per-atom coefficients); the DeepONet dot product plays the
-role of the per-branch heads + linear fusion: each dictionary branch owns a
-contiguous coefficient block, and prediction = sum over all atoms of
-coefficient * feature.
+The dictionary itself is parameter-free and frozen (the precomputed_basis
+philosophy of the reference project); each dictionary branch then feeds a
+small trainable FNN head (the reference's atoms -> h -> h -> 1 head,
+widened to trunk_out), and the per-branch head outputs concatenate into
+the trunk feature. The branch net maps sensors to coefficients over that
+concatenated feature, so the DeepONet dot product plays the role of the
+reference's linear fusion head.
 """
 
 import math
 
 import torch
 import torch.nn as nn
+
+
+class PhiActivation(nn.Module):
+    """B-spline of order 3, compact support on [0, 3] (Liu et al. 2020)."""
+    def forward(self, x):
+        return (torch.relu(x) ** 2
+                - 3 * torch.relu(x - 1) ** 2
+                + 3 * torch.relu(x - 2) ** 2
+                - torch.relu(x - 3) ** 2)
 
 
 _DB6 = None
@@ -90,33 +100,38 @@ class _AtomBank(nn.Module):
 
 
 class _WaveletTrunk(nn.Module):
-    """Frozen 2D tensor-product dictionary: (phi_0, phi_0) first, then per
-    scale the three families (phi_j, psi_j), (psi_j, phi_j), (psi_j, psi_j).
-    Output rows follow the branch-then-kron order of the reference plan:
-    branch blocks are concatenated, and within a block row (a-1)*ny + b
-    holds fx_a * fy_b."""
-    def __init__(self, domain, levels):
+    """2D tensor-product wavelet dictionary with per-branch FNN heads:
+    (phi_0, phi_0) first, then per scale the three families
+    (phi_j, psi_j), (psi_j, phi_j), (psi_j, psi_j). Each branch evaluates
+    its frozen atoms (within a branch, row (a-1)*ny + b of the atom block
+    holds fx_a * fy_b) and lifts them through a trainable head
+    atoms -> hidden -> ... -> trunk_out; the head outputs concatenate into
+    the trunk feature."""
+    def __init__(self, domain, levels, hidden_dim, depth, act, out_dim):
         super().__init__()
         lo, hi = domain
-        self.banks = nn.ModuleList()
         s = [2.0 ** -j for j in range(levels)]
         phi = [_AtomBank('phi', sj, lo, hi) for sj in s]
         psi = [_AtomBank('psi', sj, lo, hi) for sj in s]
         self.plan = [(phi[0], phi[0])]
         for j in range(levels):
             self.plan += [(phi[j], psi[j]), (psi[j], phi[j]), (psi[j], psi[j])]
-        self.banks.extend(b for pair in self.plan for b in pair)
-        self.out_dim = sum(fx.n_atoms * fy.n_atoms for fx, fy in self.plan)
+        self.banks = nn.ModuleList(b for pair in self.plan for b in pair)
+        self.heads = nn.ModuleList([
+            _FNN([fx.n_atoms * fy.n_atoms] + [hidden_dim] * depth + [out_dim], act)
+            for fx, fy in self.plan])
+        self.out_dim = len(self.plan) * out_dim
 
     def forward(self, x):
-        """x: [N, 2] -> [N, out_dim] frozen features."""
-        blocks = []
-        for fx, fy in self.plan:
+        """x: [N, 2] -> [N, out_dim] trunk features."""
+        outs = []
+        for (fx, fy), head in zip(self.plan, self.heads):
             Ax = fx(x[:, 0:1])  # [N, nx]
             Ay = fy(x[:, 1:2])  # [N, ny]
             nx, ny = fx.n_atoms, fy.n_atoms
-            blocks.append((Ax[:, :, None] * Ay[:, None, :]).reshape(-1, nx * ny))
-        return torch.cat(blocks, dim=-1)
+            atoms = (Ax[:, :, None] * Ay[:, None, :]).reshape(-1, nx * ny)
+            outs.append(head(atoms))
+        return torch.cat(outs, dim=-1)
 
 
 class _FNN(nn.Module):
@@ -136,25 +151,33 @@ class _FNN(nn.Module):
 
 
 class WaveletMscaleDeepONet(nn.Module):
-    """DeepONet whose trunk is the frozen tensor-product wavelet dictionary.
+    """DeepONet whose trunk lifts a frozen tensor-product wavelet dictionary
+    through per-branch FNN heads.
 
-    Only the branch net is trainable: it maps sensor values to one
-    coefficient per atom per output channel (num_outputs * out_dim blocks);
-    the prediction is the dictionary expansion with those coefficients.
+    The dictionary is frozen; the trainable parts are the per-branch trunk
+    heads and the branch net (sensors -> coefficients over the concatenated
+    trunk features). Prediction = DeepONet dot product (the linear fusion).
 
     Args:
-        branch_dim:  Input dimension of the branch net (sensor values).
-        trunk_dim:   Input dimension of the trunk net (coordinates, must be 2).
-        hidden_dim:  Width of the branch net hidden layers.
-        num_outputs: Output channels.
-        depth:       Number of hidden layers in the branch net.
-        levels:      Number of dyadic wavelet scales (s_j = 2^-j).
-        activation:  Activation type ('GELU' or 'Tanh') for the branch net.
-        domain:      Trunk coordinate domain (lo, hi) both axes, used only to
-                     place the frozen translation grid.
+        branch_dim:   Input dimension of the branch net (sensor values).
+        trunk_dim:    Input dimension of the trunk net (coordinates, must be 2).
+        hidden_dim:   Width of the branch net hidden layers.
+        trunk_hidden: Width of each per-branch trunk head hidden layer.
+        num_outputs:  Output channels.
+        depth:        Number of hidden layers in the branch net.
+        trunk_depth:  Number of hidden layers in each trunk head.
+        trunk_out:    Output width of each trunk head (trunk feature dim is
+                      n_branches * trunk_out, n_branches = 1 + 3 * levels).
+        levels:       Number of dyadic wavelet scales (s_j = 2^-j).
+        activation:   Branch net activation ('GELU' or 'Tanh'); trunk heads
+                      always use the Phi B-spline activation (MscaleDNN
+                      trunk convention).
+        domain:       Trunk coordinate domain (lo, hi) both axes, used only to
+                      place the frozen translation grid.
     """
-    def __init__(self, branch_dim=3, trunk_dim=2, hidden_dim=128,
-                 num_outputs=4, depth=4, levels=4, activation='GELU',
+    def __init__(self, branch_dim=3, trunk_dim=2, hidden_dim=320,
+                 trunk_hidden=64, num_outputs=4, depth=4, trunk_depth=2,
+                 trunk_out=24, levels=4, activation='GELU',
                  domain=(0.0, 1.0)):
         super().__init__()
         if trunk_dim != 2:
@@ -167,7 +190,8 @@ class WaveletMscaleDeepONet(nn.Module):
         else:
             raise ValueError(f"Unsupported activation: {activation}")
 
-        self.trunk_net = _WaveletTrunk(domain, levels)
+        self.trunk_net = _WaveletTrunk(domain, levels, trunk_hidden,
+                                       trunk_depth, PhiActivation(), trunk_out)
         self.trunk_feat_dim = self.trunk_net.out_dim
 
         branch_dims = ([branch_dim] + [hidden_dim] * depth
@@ -190,26 +214,27 @@ class WaveletMscaleDeepONet(nn.Module):
         if x_trunk.dim() == 3:
             x_trunk = x_trunk[0]
         feat = self.trunk_net(x_trunk)                    # [N, trunk_feat_dim]
+        assert feat.shape[-1] == self.trunk_feat_dim
         b = self.branch_net(x_branch)                     # [B, num_outputs * feat]
         b_out = b.view(B, self.num_outputs, self.trunk_feat_dim)
         return torch.einsum("bkh, nh -> bnk", b_out, feat)  # [B, N, num_outputs]
 
 
 if __name__ == '__main__':
-    model = WaveletMscaleDeepONet(hidden_dim=76, depth=4, levels=4)
+    model = WaveletMscaleDeepONet(hidden_dim=320, depth=4, trunk_hidden=64,
+                                  trunk_depth=2, trunk_out=24, levels=4)
     n_params = sum(p.numel() for p in model.parameters())
-    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    assert trainable == n_params, "trunk dictionary must carry no parameters"
     xb = torch.randn(8, 3)
     xt = torch.rand(6528, 2)
     out = model(xb, xt)
     assert out.shape == (8, 6528, 4), out.shape
-    out.sum().backward()  # grads reach the branch only, through frozen features
+    out.sum().backward()  # grads reach both the branch net and the trunk heads
     assert model.branch_net.net[-1].weight.grad is not None
+    assert model.trunk_net.heads[0].net[-1].weight.grad is not None
     # 3D trunk (shared grid) takes the [B, 0] slice
     xt3 = xt.unsqueeze(0).expand(8, -1, -1)
     assert torch.equal(model(xb, xt3), out)
-    per_branch = [fx.n_atoms * fy.n_atoms for fx, fy in model.trunk_net.plan]
-    print(f"branches={len(per_branch)} atoms={model.trunk_feat_dim} "
-          f"(per branch {per_branch}), params={n_params/1e6:.2f}M, "
+    atoms = [fx.n_atoms * fy.n_atoms for fx, fy in model.trunk_net.plan]
+    print(f"branches={len(atoms)} atoms={sum(atoms)} (per branch {atoms}), "
+          f"trunk_feat={model.trunk_feat_dim}, params={n_params/1e6:.2f}M, "
           f"out={tuple(out.shape)}")

@@ -53,10 +53,11 @@ def build_model(model_name, use_fourier):
     # 1,010,312 params (~1.01M budget), branch [3,278,...,278,1112], trunk [2,278,...,278,278]
     elif model_name == 'fusion_deeponet': return Fusion_DeepONet(branch_dim=3, trunk_dim=2, hidden_dim=278, num_outputs=4,
                                                                  depth=5, activation='GELU')
-    # Frozen tensor-product wavelet MRA trunk (db6 pair, 3232 atoms, 4 dyadic
-    # levels); only the branch coefficient net trains (~1.01M params)
-    elif model_name == 'wavelet_mscale_deeponet': return WaveletMscaleDeepONet(branch_dim=3, trunk_dim=2, hidden_dim=76, num_outputs=4,
-                                                                               depth=4, levels=4, activation='GELU')
+    # db6 tensor-product wavelet dictionary (3232 atoms, 4 dyadic levels), each
+    # dictionary branch lifted by a trunk FNN head (trunk_feat = 13*24 = 312); ~1.0M params
+    elif model_name == 'wavelet_mscale_deeponet': return WaveletMscaleDeepONet(branch_dim=3, trunk_dim=2, hidden_dim=320, trunk_hidden=64,
+                                                                               num_outputs=4, depth=4, trunk_depth=2, trunk_out=24,
+                                                                               levels=4, activation='GELU')
 
 def main():
     args = get_args()
