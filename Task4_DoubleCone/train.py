@@ -129,8 +129,12 @@ def main():
                 trunk = x_enc[0, 0:2].permute(1, 2, 0).reshape(-1, 2)          # [6528, 2]
                 target = y_enc.permute(0, 2, 3, 1).reshape(x_enc.shape[0], -1, 4)  # [B, 6528, 4]
                 out_enc = model(branch, trunk)
-                # Plain L1: grid-position curriculum weights don't apply in flat space
-                loss = loss_fn(out_enc, target).mean()
+                # Vacuum cells (p == 0 domain filler, log10 -> -6) are pseudo-targets
+                # outside the CFD domain: mask them so the loss trains on the
+                # physical field only. Plain L1 otherwise: grid-position curriculum
+                # weights don't apply in flat space.
+                mask = (y[:, 3].reshape(x_enc.shape[0], -1) > -5.5).unsqueeze(-1)  # [B, 6528, 1]
+                loss = (loss_fn(out_enc, target) * mask).sum() / (mask.sum() * target.shape[-1])
             else:
                 out_enc = model(x_enc)
 
@@ -166,6 +170,10 @@ def main():
                     target = y_enc_test.permute(0, 2, 3, 1).reshape(x_enc_test.shape[0], -1, 4)
                     out_enc_test = model(branch, trunk)
                     raw_test_loss = loss_fn(out_enc_test, target)
+                    # Same vacuum mask as the train loss (best-model selection
+                    # must track the optimized objective)
+                    mask_t = (y_test[:, 3].reshape(x_enc_test.shape[0], -1) > -5.5).unsqueeze(-1)
+                    raw_test_loss = (raw_test_loss * mask_t).sum() / (mask_t.sum() * target.shape[-1])
                 else:
                     out_enc_test = model(x_enc_test)
                     # Unweighted L1 loss for validation
