@@ -3,3 +3,4 @@ numpy>=1.21.0
 matplotlib>=3.5.0
 scipy>=1.7.0
 tqdm>=4.60.0
+PyWavelets>=1.1.0  # lazy dep of Task4 model_wavelet_mscale_deeponet (db6 wavefun)

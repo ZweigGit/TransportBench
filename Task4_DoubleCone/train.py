@@ -56,9 +56,9 @@ def build_model(model_name, use_fourier):
     # Frozen db6 tensor-product wavelet dictionary trunk (11392 atoms, 6 dyadic
     # levels, measured linear floor 0.084); LoRA-style branch head:
     # hidden -> 16 -> 4x11392 coefficients (~1.0M params)
-    elif model_name == 'wavelet_deeponet': return WaveletDeepONet(branch_dim=3, trunk_dim=2, hidden_dim=266, num_outputs=4,
+    elif model_name == 'wavelet_deeponet': return WaveletDeepONet(branch_dim=3, trunk_dim=2, hidden_dim=227, num_outputs=4,
                                                                   depth=4, levels=6, activation='GELU',
-                                                                  wavelet='db6', lora_rank=16)
+                                                                  wavelet='db4', lora_rank=24)
 
 def main():
     args = get_args()
