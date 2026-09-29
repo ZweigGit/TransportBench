@@ -54,17 +54,19 @@ class _AtomBank(nn.Module):
     s^-1/2 * f((x - t_k) / s) with f interpolated on the cascade grid.
 
     kind: 'phi' or 'psi' (both supported on [0, dec_len - 1]).
-    Translations sit on the dyadic grid t_k = k * s, keeping every atom
-    whose support [t_k, t_k + (dec_len - 1) s] reaches the domain.
+    Translations sit on the grid t_k = k * stride * s (k stepping by
+    `stride` over the full lattice), keeping every atom whose support
+    [t_k, t_k + (dec_len - 1) s] reaches the domain. stride > 1 thins the
+    translate frame uniformly at every scale (frame redundancy ~ W/stride).
     """
-    def __init__(self, kind, scale, lo, hi, wavelet):
+    def __init__(self, kind, scale, lo, hi, wavelet, stride=1):
         super().__init__()
         self.kind = kind
         dec_len, grid, phi, psi = _wavefun(wavelet)
         w = float(dec_len - 1)  # support width
         k_lo = math.ceil((lo - w * scale) / scale)
         k_hi = math.floor(hi / scale)
-        t = torch.arange(k_lo, k_hi + 1, dtype=torch.float32) * scale
+        t = torch.arange(k_lo, k_hi + 1, stride, dtype=torch.float32) * scale
         self.register_buffer('t', t)
         self.register_buffer('inv_s', torch.tensor(1.0 / scale))
         self.register_buffer('inv_sqrt_s', torch.tensor(scale ** -0.5))
@@ -96,12 +98,12 @@ class _WaveletTrunk(nn.Module):
     Output rows follow the branch-then-kron order of the reference plan:
     branch blocks are concatenated, and within a block row (a-1)*ny + b
     holds fx_a * fy_b."""
-    def __init__(self, domain, levels, wavelet):
+    def __init__(self, domain, levels, wavelet, stride=1):
         super().__init__()
         lo, hi = domain
         s = [2.0 ** -j for j in range(levels)]
-        phi = [_AtomBank('phi', sj, lo, hi, wavelet) for sj in s]
-        psi = [_AtomBank('psi', sj, lo, hi, wavelet) for sj in s]
+        phi = [_AtomBank('phi', sj, lo, hi, wavelet, stride) for sj in s]
+        psi = [_AtomBank('psi', sj, lo, hi, wavelet, stride) for sj in s]
         self.plan = [(phi[0], phi[0])]
         for j in range(levels):
             self.plan += [(phi[j], psi[j]), (psi[j], phi[j]), (psi[j], psi[j])]
@@ -153,14 +155,15 @@ class WaveletDeepONet(nn.Module):
         wavelet:     PyWavelets db-N name for the MRA pair.
         domain:      Trunk coordinate domain (lo, hi) both axes, used only to
                      place the frozen translation grid.
+        stride:      Translation-lattice stride (>1 thins the frame uniformly
+                     at every scale; pure geometry, no data involved).
         lora_rank:   LoRA-style factorized branch head: hidden -> r -> out,
                      so the coefficient output lives in an r-dim subspace
-                     learned from scratch (measured coefficient rank@99.9%
-                     energy ~23, so r=32 keeps headroom). None = plain head.
+                     learned from scratch. None = plain head.
     """
-    def __init__(self, branch_dim=3, trunk_dim=2, hidden_dim=266,
-                 num_outputs=4, depth=4, levels=6, activation='GELU',
-                 wavelet='db6', domain=(0.0, 1.0), lora_rank=16):
+    def __init__(self, branch_dim=3, trunk_dim=2, hidden_dim=397,
+                 num_outputs=4, depth=4, levels=5, activation='GELU',
+                 wavelet='db4', domain=(0.0, 1.0), stride=2, lora_rank=128):
         super().__init__()
         if trunk_dim != 2:
             raise ValueError("the tensor dictionary is 2D only")
@@ -172,7 +175,7 @@ class WaveletDeepONet(nn.Module):
         else:
             raise ValueError(f"Unsupported activation: {activation}")
 
-        self.trunk_net = _WaveletTrunk(domain, levels, wavelet)
+        self.trunk_net = _WaveletTrunk(domain, levels, wavelet, stride)
         self.trunk_feat_dim = self.trunk_net.out_dim
         out_width = num_outputs * self.trunk_feat_dim
 
@@ -209,8 +212,8 @@ class WaveletDeepONet(nn.Module):
 
 
 if __name__ == '__main__':
-    model = WaveletDeepONet(hidden_dim=266, depth=4, levels=6,
-                            wavelet='db6', lora_rank=16)
+    model = WaveletDeepONet(hidden_dim=397, depth=4, levels=5,
+                            wavelet='db4', stride=2, lora_rank=128)
     n_params = sum(p.numel() for p in model.parameters())
     assert sum(p.numel() for p in model.trunk_net.parameters()) == 0, \
         "trunk dictionary must carry no parameters"
