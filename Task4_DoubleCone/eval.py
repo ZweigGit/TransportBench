@@ -1,11 +1,10 @@
 import os
 import argparse
 import torch
-import torch.nn as nn
 import numpy as np
 import matplotlib.pyplot as plt
 
-from data_loader import MinMaxNormalizer, get_split_indices
+from data_loader import MinMaxNormalizer, get_split_indices, vacuum_mask
 from train import build_model  # single source of model configs, keeps eval in sync with train
 
 def get_args():
@@ -59,6 +58,7 @@ def main():
     data_full = torch.load(args.data_path, weights_only=False)
     x_data = data_full['x'].float()
     y_data = data_full['y'].float()
+    vac = vacuum_mask(y_data).to(device)      # domain-filler cells, not targets
     
     y_data_log = y_data.clone()
     y_data_log[:, 3, :, :] = torch.log10(y_data[:, 3, :, :] + 1e-6)
@@ -91,8 +91,6 @@ def main():
     y_test_log = y_test_phys.clone()
     y_test_log[:, 3] = torch.log10(y_test_phys[:, 3] + 1e-6)  # pressure in log10 before normalization
 
-    criterion_mae = nn.L1Loss(reduction='sum')
-    criterion_mse = nn.MSELoss(reduction='sum')
     total_mae, total_mse = 0.0, 0.0
     total_l2_error, total_p_l2_error = 0.0, 0.0
 
@@ -111,18 +109,25 @@ def main():
                 pred_enc = model(x_enc_batch)
             y_enc = y_norm.encode(y_test_log[s:s+bs])  # target in normalized [0,1] space
 
-            total_mae += criterion_mae(pred_enc, y_enc).item()
-            total_mse += criterion_mse(pred_enc, y_enc).item()
+            # All metrics on the fluid domain only: zero out vacuum filler cells
+            err = pred_enc - y_enc
+            err[:, :, vac] = 0.0
+            tgt = y_enc.clone()
+            tgt[:, :, vac] = 0.0
 
-            l2_err = torch.norm((pred_enc - y_enc).flatten(1), dim=1) / \
-                     (torch.norm(y_enc.flatten(1), dim=1) + 1e-8)
-            p_l2_err = torch.norm((pred_enc[:, 3:4] - y_enc[:, 3:4]).flatten(1), dim=1) / \
-                       (torch.norm(y_enc[:, 3:4].flatten(1), dim=1) + 1e-8)
+            total_mae += err.abs().sum().item()
+            total_mse += (err ** 2).sum().item()
+
+            l2_err = torch.norm(err.flatten(1), dim=1) / \
+                     (torch.norm(tgt.flatten(1), dim=1) + 1e-8)
+            p_l2_err = torch.norm(err[:, 3:4].flatten(1), dim=1) / \
+                       (torch.norm(tgt[:, 3:4].flatten(1), dim=1) + 1e-8)
             total_l2_error += l2_err.sum().item()
             total_p_l2_error += p_l2_err.sum().item()
 
-    final_mae = total_mae / y_test_phys.numel()
-    final_mse = total_mse / y_test_phys.numel()
+    n_valid_el = len(test_idx) * 4 * (~vac).sum().item()
+    final_mae = total_mae / n_valid_el
+    final_mse = total_mse / n_valid_el
     final_rel_l2 = total_l2_error / len(test_idx)
     final_p_rel_l2 = total_p_l2_error / len(test_idx)
 
@@ -139,7 +144,7 @@ def main():
     with open(eval_file, 'w', encoding='utf-8') as f:
         f.write(f"Model       : {args.model.upper()} ({'coordinate-based' if args.model in fourierless else 'fourier' if checkpoint_fourier else 'nofourier'})\n")
         f.write(f"Checkpoint  : {ckpt_path}\n")
-        f.write(f"Metric space: normalized [0,1] (p=log10)\n")
+        f.write(f"Metric space: normalized [0,1] (p=log10), vacuum cells excluded\n")
         f.write(f"MAE         : {final_mae:.4g}\n")
         f.write(f"MSE         : {final_mse:.4g}\n")
         f.write(f"RL2E        : {final_rel_l2:.4g}\n")
@@ -171,6 +176,12 @@ def main():
 
         x_np, y_true, y_pred, err = to_np(x_input), to_np(y_true_phys), to_np(y_pred_phys), to_np(error)
         Grid_X, Grid_Y = x_np[0], x_np[1]
+        # blank vacuum filler cells (outside the fluid domain) in all panels
+        vac_np = vac.cpu().numpy()
+        valid2d = ~vac_np
+        y_true[:, vac_np] = np.nan
+        y_pred[:, vac_np] = np.nan
+        err[:, vac_np] = np.nan
 
         fourier_text = ("Coordinate-based" if args.model in fourierless
                         else "With Fourier" if checkpoint_fourier else "No Fourier")
@@ -186,7 +197,7 @@ def main():
             var_idx, cmap = cfg['idx'], cfg['cmap']
             gt, pred, e = y_true[var_idx], y_pred[var_idx], err[var_idx]
 
-            l2_err = np.linalg.norm(e) / (np.linalg.norm(gt) + 1e-8)
+            l2_err = np.linalg.norm(e[valid2d]) / (np.linalg.norm(gt[valid2d]) + 1e-8)
             vmin, vmax = min(gt.min(), pred.min()), max(np.percentile(gt, 99), np.percentile(pred, 99))
 
             ax1 = fig.add_subplot(gs[row_idx, 0])

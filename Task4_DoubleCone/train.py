@@ -6,7 +6,7 @@ import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from data_loader import get_dataloader_and_stats
+from data_loader import get_dataloader_and_stats, vacuum_mask
 
 from model_ae import AutoEncoder2d
 from model_deeponet import DeepONet2d
@@ -53,12 +53,12 @@ def build_model(model_name, use_fourier):
     # 1,010,312 params (~1.01M budget), branch [3,278,...,278,1112], trunk [2,278,...,278,278]
     elif model_name == 'fusion_deeponet': return Fusion_DeepONet(branch_dim=3, trunk_dim=2, hidden_dim=278, num_outputs=4,
                                                                  depth=5, activation='GELU')
-    # Frozen db6 tensor-product wavelet dictionary trunk (11392 atoms, 6 dyadic
-    # levels, measured linear floor 0.084); LoRA-style branch head:
-    # hidden -> 16 -> 4x11392 coefficients (~1.0M params)
-    elif model_name == 'wavelet_deeponet': return WaveletDeepONet(branch_dim=3, trunk_dim=2, hidden_dim=227, num_outputs=4,
-                                                                  depth=4, levels=6, activation='GELU',
-                                                                  wavelet='db4', lora_rank=24)
+    # Frozen db4 tensor-product wavelet dictionary trunk, stride-2 translate
+    # lattice (907 atoms, 5 dyadic levels, measured linear floor 0.167);
+    # LoRA-style branch head: hidden -> 128 -> 4x907 coefficients (~1.0M params)
+    elif model_name == 'wavelet_deeponet': return WaveletDeepONet(branch_dim=3, trunk_dim=2, hidden_dim=397, num_outputs=4,
+                                                                  depth=4, levels=5, activation='GELU',
+                                                                  wavelet='db4', stride=2, lora_rank=128)
 
 def main():
     args = get_args()
@@ -85,7 +85,11 @@ def main():
     log(f"=== Training {args.model.upper()} | Fourier: {use_fourier} | Device: {device} ===")
     log("Strategy: TIME-DILATED GOLDEN PROTOCOL (Peak LR @ 40%, Weights start @ Ep800)")
 
-    train_loader, test_loader, x_norm, y_norm = get_dataloader_and_stats(args.data_path, args.batch_size, device)
+    train_loader, test_loader, x_norm, y_norm, vac = get_dataloader_and_stats(args.data_path, args.batch_size, device)
+    vac = vac.to(device)
+    vac_flat = vac.reshape(-1)                    # [6528]
+    valid_w = (~vac_flat).float()                 # vacuum filler cells are not targets
+    valid_n = int(valid_w.sum().item())
     
     model = build_model(args.model, use_fourier).to(device)
     log(f"Model Parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.2f} M")
@@ -129,12 +133,10 @@ def main():
                 trunk = x_enc[0, 0:2].permute(1, 2, 0).reshape(-1, 2)          # [6528, 2]
                 target = y_enc.permute(0, 2, 3, 1).reshape(x_enc.shape[0], -1, 4)  # [B, 6528, 4]
                 out_enc = model(branch, trunk)
-                # Vacuum cells (p == 0 domain filler, log10 -> -6) are pseudo-targets
-                # outside the CFD domain: mask them so the loss trains on the
-                # physical field only. Plain L1 otherwise: grid-position curriculum
-                # weights don't apply in flat space.
-                mask = (y[:, 3].reshape(x_enc.shape[0], -1) > -5.5).unsqueeze(-1)  # [B, 6528, 1]
-                loss = (loss_fn(out_enc, target) * mask).sum() / (mask.sum() * target.shape[-1])
+                # Vacuum filler cells carry no physics: excluded from the loss
+                # (valid_w is constant, computed once above). Plain L1 otherwise:
+                # grid-position curriculum weights don't apply in flat space.
+                loss = (loss_fn(out_enc, target) * valid_w).sum() / (x_enc.shape[0] * valid_n * 4)
             else:
                 out_enc = model(x_enc)
 
@@ -145,8 +147,9 @@ def main():
                 w[:, :, 1, :] = w_near      # Near-wall
                 w[:, :, 3, :] = w_near      # Near-wall
                 w[:, 3, :, :] *= w_p        # Pressure channel augmentation
+                w[:, :, vac] = 0.0          # Vacuum filler cells are not targets
 
-                loss = (raw_loss * w).mean()
+                loss = (raw_loss * w).sum() / w.sum()
             loss.backward()
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -169,16 +172,12 @@ def main():
                     trunk = x_enc_test[0, 0:2].permute(1, 2, 0).reshape(-1, 2)
                     target = y_enc_test.permute(0, 2, 3, 1).reshape(x_enc_test.shape[0], -1, 4)
                     out_enc_test = model(branch, trunk)
-                    raw_test_loss = loss_fn(out_enc_test, target)
-                    # Same vacuum mask as the train loss (best-model selection
-                    # must track the optimized objective)
-                    mask_t = (y_test[:, 3].reshape(x_enc_test.shape[0], -1) > -5.5).unsqueeze(-1)
-                    raw_test_loss = (raw_test_loss * mask_t).sum() / (mask_t.sum() * target.shape[-1])
+                    raw_test_loss = loss_fn(out_enc_test, target)[:, ~vac_flat, :].mean()
                 else:
                     out_enc_test = model(x_enc_test)
-                    # Unweighted L1 loss for validation
-                    raw_test_loss = loss_fn(out_enc_test, y_enc_test)
-                test_loss_val += raw_test_loss.mean().item()
+                    # Unweighted (vacuum-masked) L1 loss for validation
+                    raw_test_loss = loss_fn(out_enc_test, y_enc_test)[:, :, ~vac].mean()
+                test_loss_val += raw_test_loss.item()
                 
         test_loss_val /= len(test_loader)
         history['test_loss'].append(test_loss_val)
