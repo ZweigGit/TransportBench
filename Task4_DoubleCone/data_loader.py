@@ -55,6 +55,14 @@ def get_split_indices(n_total):
 
     return indices[:n_train], indices[n_train:]
 
+def vacuum_mask(y_data):
+    """Bool [H, W] mask of domain-filler cells: pressure == 0 in every sample
+    (body-interior wedge + outflow-boundary corners of the body-fitted mesh).
+    All four channels are exactly zero there in all samples - not physical
+    targets, identical across the whole dataset."""
+    return (y_data[:, 3] == 0).all(dim=0)
+
+
 def get_dataloader_and_stats(data_path, batch_size, device):
     """
     Load dataset and compute normalization statistics
@@ -92,4 +100,4 @@ def get_dataloader_and_stats(data_path, batch_size, device):
     x_norm = MinMaxNormalizer(x_min, x_max).to(device)
     y_norm = MinMaxNormalizer(y_min, y_max).to(device)
 
-    return train_loader, test_loader, x_norm, y_norm
+    return train_loader, test_loader, x_norm, y_norm, vacuum_mask(y_data)
