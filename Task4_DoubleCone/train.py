@@ -88,7 +88,7 @@ def main():
     train_loader, test_loader, x_norm, y_norm, vac = get_dataloader_and_stats(args.data_path, args.batch_size, device)
     vac = vac.to(device)
     vac_flat = vac.reshape(-1)                    # [6528]
-    valid_w = (~vac_flat).float()                 # vacuum filler cells are not targets
+    valid_w = (~vac_flat).float().unsqueeze(-1)   # [6528, 1], broadcasts over channels
     valid_n = int(valid_w.sum().item())
     
     model = build_model(args.model, use_fourier).to(device)
