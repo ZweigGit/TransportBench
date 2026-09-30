@@ -53,13 +53,12 @@ def build_model(model_name, use_fourier):
     # 1,010,312 params (~1.01M budget), branch [3,278,...,278,1112], trunk [2,278,...,278,278]
     elif model_name == 'fusion_deeponet': return Fusion_DeepONet(branch_dim=3, trunk_dim=2, hidden_dim=278, num_outputs=4,
                                                                  depth=5, activation='GELU')
-    # Frozen Morlet tensor-product wavelet dictionary trunk (4012 atoms, 5
-    # dyadic levels, closed-form basis; measured linear floor 0.274, worse
-    # than dbN - Morlet has no scaling function and coarse scales degenerate);
-    # LoRA-style branch head: hidden -> 48 -> 4x4012 coefficients (~1.0M params)
-    elif model_name == 'wavelet_deeponet': return WaveletDeepONet(branch_dim=3, trunk_dim=2, hidden_dim=256, num_outputs=4,
+    # Frozen db10 tensor-product wavelet dictionary trunk (11184 atoms, 5 dyadic
+    # levels, measured linear floor 0.110); LoRA-style branch head:
+    # hidden -> 20 -> 4x11184 coefficients (~1.0M params)
+    elif model_name == 'wavelet_deeponet': return WaveletDeepONet(branch_dim=3, trunk_dim=2, hidden_dim=136, num_outputs=4,
                                                                   depth=4, levels=5, activation='GELU',
-                                                                  wavelet='morlet', stride=1, lora_rank=48)
+                                                                  wavelet='db10', stride=1, lora_rank=20)
 
 def main():
     args = get_args()
