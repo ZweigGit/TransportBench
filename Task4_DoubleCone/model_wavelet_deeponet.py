@@ -14,12 +14,13 @@ dilated/translated on the dyadic grid with the s^-1/2 factor
 normalization (the 2D tensor normalization is the product of the two
 factor normalizations).
 
-The dictionary is parameter-free and frozen, so - like the precomputed_basis
-philosophy of the reference project - the only trainable part is the branch
-net (sensors -> per-atom coefficients); the DeepONet dot product plays the
-role of the per-branch heads + linear fusion: each dictionary branch owns a
-contiguous coefficient block, and prediction = sum over all atoms of
-coefficient * feature.
+The dictionary atoms are frozen, but each trunk branch warps the input
+coordinates through a residual FNN (zero-initialized output layer, so the
+branch starts as the plain dictionary expansion), evaluates its frozen
+tensor atoms at the warped point and linearly combines them into its
+feature. The concatenated branch features form the trunk feature; the
+branch net maps sensors to coefficients over it, and the DeepONet dot
+product is the fusion.
 """
 
 import math
@@ -111,13 +112,34 @@ class _AtomBank(nn.Module):
         return f * inside.to(f.dtype) * self.inv_sqrt_s
 
 
+class _BranchTrunk(nn.Module):
+    """One dictionary branch: residual-warp FNN -> frozen tensor atoms ->
+    linear readout (the branch feature). The warp's final layer is
+    zero-initialized, so at step 0 the branch is the plain dictionary
+    expansion at the raw coordinates."""
+    def __init__(self, fx, fy, hidden_dim, depth, act, out_dim):
+        super().__init__()
+        self.fx, self.fy = fx, fy
+        self.warp = _FNN([2] + [hidden_dim] * depth + [2], act)
+        nn.init.zeros_(self.warp.net[-1].weight)
+        nn.init.zeros_(self.warp.net[-1].bias)
+        self.readout = nn.Linear(fx.n_atoms * fy.n_atoms, out_dim)
+
+    def forward(self, x):
+        """x: [N, 2] coords -> [N, out_dim] branch feature."""
+        u = x + self.warp(x)                  # identity at init
+        Ax = self.fx(u[:, 0:1])               # [N, nx]
+        Ay = self.fy(u[:, 1:2])               # [N, ny]
+        atoms = (Ax[:, :, None] * Ay[:, None, :]).reshape(x.shape[0], -1)
+        return self.readout(atoms)
+
+
 class _WaveletTrunk(nn.Module):
-    """Frozen 2D tensor-product dictionary: (phi_0, phi_0) first, then per
-    scale the three families (phi_j, psi_j), (psi_j, phi_j), (psi_j, psi_j).
-    Output rows follow the branch-then-kron order of the reference plan:
-    branch blocks are concatenated, and within a block row (a-1)*ny + b
-    holds fx_a * fy_b."""
-    def __init__(self, domain, levels, wavelet, stride=1):
+    """2D tensor-product wavelet dictionary with per-branch trainable warps
+    and linear readouts: (phi_0, phi_0) first, then per scale the three
+    families (phi_j, psi_j), (psi_j, phi_j), (psi_j, psi_j)."""
+    def __init__(self, domain, levels, wavelet, stride,
+                 hidden_dim, depth, act, out_dim):
         super().__init__()
         lo, hi = domain
         s = [2.0 ** -j for j in range(levels)]
@@ -126,18 +148,14 @@ class _WaveletTrunk(nn.Module):
         self.plan = [(phi[0], phi[0])]
         for j in range(levels):
             self.plan += [(phi[j], psi[j]), (psi[j], phi[j]), (psi[j], psi[j])]
-        self.banks = nn.ModuleList(b for pair in self.plan for b in pair)
-        self.out_dim = sum(fx.n_atoms * fy.n_atoms for fx, fy in self.plan)
+        self.branches = nn.ModuleList([
+            _BranchTrunk(fx, fy, hidden_dim, depth, act, out_dim)
+            for fx, fy in self.plan])
+        self.out_dim = len(self.plan) * out_dim
 
     def forward(self, x):
-        """x: [N, 2] -> [N, out_dim] frozen features."""
-        blocks = []
-        for fx, fy in self.plan:
-            Ax = fx(x[:, 0:1])  # [N, nx]
-            Ay = fy(x[:, 1:2])  # [N, ny]
-            nx, ny = fx.n_atoms, fy.n_atoms
-            blocks.append((Ax[:, :, None] * Ay[:, None, :]).reshape(-1, nx * ny))
-        return torch.cat(blocks, dim=-1)
+        """x: [N, 2] -> [N, out_dim] trunk features."""
+        return torch.cat([br(x) for br in self.branches], dim=-1)
 
 
 class _FNN(nn.Module):
@@ -176,13 +194,17 @@ class WaveletDeepONet(nn.Module):
                      place the frozen translation grid.
         stride:      Translation-lattice stride (>1 thins the frame uniformly
                      at every scale; pure geometry, no data involved).
-        lora_rank:   LoRA-style factorized branch head: hidden -> r -> out,
-                     so the coefficient output lives in an r-dim subspace
-                     learned from scratch. None = plain head.
+        warp_hidden: Width of each per-branch coordinate-warp FNN.
+        warp_depth:  Hidden layers in each coordinate-warp FNN.
+        trunk_out:   Linear-readout width of each branch (trunk feature dim
+                     is n_branches * trunk_out).
+        lora_rank:   Optional LoRA-style factorized branch head. None (the
+                     default) = plain full-rank head.
     """
-    def __init__(self, branch_dim=3, trunk_dim=2, hidden_dim=129,
+    def __init__(self, branch_dim=3, trunk_dim=2, hidden_dim=385,
                  num_outputs=4, depth=4, levels=4, activation='GELU',
-                 wavelet='db4', domain=(0.0, 1.0), stride=1, lora_rank=None):
+                 wavelet='db4', domain=(0.0, 1.0), stride=1,
+                 warp_hidden=32, warp_depth=2, trunk_out=24, lora_rank=None):
         super().__init__()
         if trunk_dim != 2:
             raise ValueError("the tensor dictionary is 2D only")
@@ -194,7 +216,8 @@ class WaveletDeepONet(nn.Module):
         else:
             raise ValueError(f"Unsupported activation: {activation}")
 
-        self.trunk_net = _WaveletTrunk(domain, levels, wavelet, stride)
+        self.trunk_net = _WaveletTrunk(domain, levels, wavelet, stride,
+                                       warp_hidden, warp_depth, act, trunk_out)
         self.trunk_feat_dim = self.trunk_net.out_dim
         out_width = num_outputs * self.trunk_feat_dim
 
@@ -231,21 +254,26 @@ class WaveletDeepONet(nn.Module):
 
 
 if __name__ == '__main__':
-    model = WaveletDeepONet(hidden_dim=129, depth=4, levels=4,
-                            wavelet='db4', stride=1, lora_rank=None)
+    model = WaveletDeepONet(hidden_dim=385, depth=4, levels=4,
+                            wavelet='db4', stride=1,
+                            warp_hidden=32, warp_depth=2, trunk_out=24)
     n_params = sum(p.numel() for p in model.parameters())
-    assert sum(p.numel() for p in model.trunk_net.parameters()) == 0, \
-        "trunk dictionary must carry no parameters"
     xb = torch.randn(8, 3)
     xt = torch.rand(6528, 2)
+    # warps start at the identity: dictionary semantics at step 0
+    assert model.trunk_net.branches[0].warp(xt).abs().max() == 0
     out = model(xb, xt)
     assert out.shape == (8, 6528, 4), out.shape
-    out.sum().backward()  # grads reach the branch only, through frozen features
-    assert model.branch_net[-1].weight.grad is not None
+    out.sum().backward()
+    assert model.branch_net.net[-1].weight.grad is not None
+    assert model.trunk_net.branches[0].readout.weight.grad is not None
+    assert model.trunk_net.branches[0].warp.net[-1].weight.grad is not None
     # 3D trunk (shared grid) takes the [B, 0] slice
     xt3 = xt.unsqueeze(0).expand(8, -1, -1)
     assert torch.equal(model(xb, xt3), out)
-    atoms = [fx.n_atoms * fy.n_atoms for fx, fy in model.trunk_net.plan]
-    print(f"branches={len(atoms)} atoms={model.trunk_feat_dim} "
-          f"(per branch {atoms}), lora_r=16, params={n_params/1e6:.2f}M, "
+    atoms = sum(fx.n_atoms * fy.n_atoms for fx, fy in model.trunk_net.plan)
+    trunk_params = sum(p.numel() for p in model.trunk_net.parameters())
+    print(f"branches={len(model.trunk_net.plan)} frozen_atoms={atoms} "
+          f"trunk_feat={model.trunk_feat_dim} "
+          f"(trunk {trunk_params/1e3:.0f}K trainable), params={n_params/1e6:.2f}M, "
           f"out={tuple(out.shape)}")

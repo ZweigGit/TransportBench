@@ -53,12 +53,13 @@ def build_model(model_name, use_fourier):
     # 1,010,312 params (~1.01M budget), branch [3,278,...,278,1112], trunk [2,278,...,278,278]
     elif model_name == 'fusion_deeponet': return Fusion_DeepONet(branch_dim=3, trunk_dim=2, hidden_dim=278, num_outputs=4,
                                                                  depth=5, activation='GELU')
-    # Frozen db4 tensor-product wavelet dictionary trunk (1824 atoms, 4 dyadic
-    # levels, measured linear floor 0.165); plain full-rank branch head:
-    # hidden -> 4x1824 coefficients directly (~1.0M params)
-    elif model_name == 'wavelet_deeponet': return WaveletDeepONet(branch_dim=3, trunk_dim=2, hidden_dim=129, num_outputs=4,
+    # db4 tensor-product wavelet dictionary trunk with per-branch residual-warp
+    # FNNs + linear readouts (1824 frozen atoms, 13 branches x 24 = 312 trunk
+    # features); plain full-rank branch head (~1.0M params)
+    elif model_name == 'wavelet_deeponet': return WaveletDeepONet(branch_dim=3, trunk_dim=2, hidden_dim=385, num_outputs=4,
                                                                   depth=4, levels=4, activation='GELU',
-                                                                  wavelet='db4', stride=1, lora_rank=None)
+                                                                  wavelet='db4', stride=1,
+                                                                  warp_hidden=32, warp_depth=2, trunk_out=24)
 
 def main():
     args = get_args()
@@ -101,12 +102,7 @@ def main():
         steps_per_epoch=len(train_loader), pct_start=0.4, anneal_strategy='cos'
     )
 
-    # wavelet_deeponet only: MSE. The eval metric (RL2E) and the dictionary
-    # linear floor are L2 quantities, while L1's constant gradient let rare
-    # cells drift decades in log-p space (measured: spikes/inf).
     loss_fn = nn.L1Loss(reduction='none')
-    if args.model == 'wavelet_deeponet':
-        loss_fn = nn.MSELoss(reduction='none')
     best_test_loss = float('inf')
     best_test_epoch = -1
     history = {'train_loss': [], 'test_loss': []}
