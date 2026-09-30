@@ -49,6 +49,17 @@ def _wavefun(name, level=10):
     return _WAVEFUN[name]
 
 
+def _morlet_phi(u):
+    """Gaussian 'scaling' factor of the Morlet plan (Morlet has no true
+    scaling function; support +-4 by envelope truncation)."""
+    return torch.exp(-u * u / 2)
+
+
+def _morlet_psi(u):
+    """Real Morlet wavelet cos(5u) exp(-u^2/2), truncated at |u| = 4."""
+    return torch.cos(5 * u) * torch.exp(-u * u / 2)
+
+
 class _AtomBank(nn.Module):
     """Frozen 1D dictionary of one db-N wavelet family:
     s^-1/2 * f((x - t_k) / s) with f interpolated on the cascade grid.
@@ -62,16 +73,20 @@ class _AtomBank(nn.Module):
     def __init__(self, kind, scale, lo, hi, wavelet, stride=1):
         super().__init__()
         self.kind = kind
-        dec_len, grid, phi, psi = _wavefun(wavelet)
-        w = float(dec_len - 1)  # support width
-        k_lo = math.ceil((lo - w * scale) / scale)
-        k_hi = math.floor(hi / scale)
+        self.closed = wavelet == 'morlet'
+        if self.closed:
+            w_lo, w_hi = -4.0, 4.0   # symmetric Gaussian-envelope support
+        else:
+            dec_len, grid, phi, psi = _wavefun(wavelet)
+            w_lo, w_hi = 0.0, float(dec_len - 1)
+            self.register_buffer('grid', grid)
+            self.register_buffer('vals', phi if kind == 'phi' else psi)
+        k_lo = math.ceil((lo - w_hi * scale) / scale)
+        k_hi = math.floor((hi - w_lo * scale) / scale)
         t = torch.arange(k_lo, k_hi + 1, stride, dtype=torch.float32) * scale
         self.register_buffer('t', t)
         self.register_buffer('inv_s', torch.tensor(1.0 / scale))
         self.register_buffer('inv_sqrt_s', torch.tensor(scale ** -0.5))
-        self.register_buffer('grid', grid)
-        self.register_buffer('vals', phi if kind == 'phi' else psi)
 
     @property
     def n_atoms(self):
@@ -80,6 +95,10 @@ class _AtomBank(nn.Module):
     def forward(self, x):
         """x: [N, 1] coordinates -> [N, n_atoms] features."""
         u = (x - self.t) * self.inv_s
+        if self.closed:
+            f = (_morlet_phi if self.kind == 'phi' else _morlet_psi)(u)
+            f = f * (u.abs() <= 4.0).to(f.dtype)
+            return f * self.inv_sqrt_s
         dx = self.grid[1] - self.grid[0]
         pos = (u - self.grid[0]) / dx
         inside = (pos >= 0) & (pos <= self.grid.numel() - 1)
@@ -161,9 +180,9 @@ class WaveletDeepONet(nn.Module):
                      so the coefficient output lives in an r-dim subspace
                      learned from scratch. None = plain head.
     """
-    def __init__(self, branch_dim=3, trunk_dim=2, hidden_dim=147,
+    def __init__(self, branch_dim=3, trunk_dim=2, hidden_dim=256,
                  num_outputs=4, depth=4, levels=5, activation='GELU',
-                 wavelet='db4', domain=(0.0, 1.0), stride=1, lora_rank=64):
+                 wavelet='morlet', domain=(0.0, 1.0), stride=1, lora_rank=48):
         super().__init__()
         if trunk_dim != 2:
             raise ValueError("the tensor dictionary is 2D only")
@@ -212,8 +231,8 @@ class WaveletDeepONet(nn.Module):
 
 
 if __name__ == '__main__':
-    model = WaveletDeepONet(hidden_dim=147, depth=4, levels=5,
-                            wavelet='db4', stride=1, lora_rank=64)
+    model = WaveletDeepONet(hidden_dim=256, depth=4, levels=5,
+                            wavelet='morlet', stride=1, lora_rank=48)
     n_params = sum(p.numel() for p in model.parameters())
     assert sum(p.numel() for p in model.trunk_net.parameters()) == 0, \
         "trunk dictionary must carry no parameters"
