@@ -180,9 +180,9 @@ class WaveletDeepONet(nn.Module):
                      so the coefficient output lives in an r-dim subspace
                      learned from scratch. None = plain head.
     """
-    def __init__(self, branch_dim=3, trunk_dim=2, hidden_dim=136,
-                 num_outputs=4, depth=4, levels=5, activation='GELU',
-                 wavelet='db10', domain=(0.0, 1.0), stride=1, lora_rank=20):
+    def __init__(self, branch_dim=3, trunk_dim=2, hidden_dim=129,
+                 num_outputs=4, depth=4, levels=4, activation='GELU',
+                 wavelet='db4', domain=(0.0, 1.0), stride=1, lora_rank=None):
         super().__init__()
         if trunk_dim != 2:
             raise ValueError("the tensor dictionary is 2D only")
@@ -231,8 +231,8 @@ class WaveletDeepONet(nn.Module):
 
 
 if __name__ == '__main__':
-    model = WaveletDeepONet(hidden_dim=136, depth=4, levels=5,
-                            wavelet='db10', stride=1, lora_rank=20)
+    model = WaveletDeepONet(hidden_dim=129, depth=4, levels=4,
+                            wavelet='db4', stride=1, lora_rank=None)
     n_params = sum(p.numel() for p in model.parameters())
     assert sum(p.numel() for p in model.trunk_net.parameters()) == 0, \
         "trunk dictionary must carry no parameters"
