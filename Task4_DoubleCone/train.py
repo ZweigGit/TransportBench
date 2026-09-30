@@ -101,7 +101,12 @@ def main():
         steps_per_epoch=len(train_loader), pct_start=0.4, anneal_strategy='cos'
     )
 
+    # wavelet_deeponet only: MSE. The eval metric (RL2E) and the dictionary
+    # linear floor are L2 quantities, while L1's constant gradient let rare
+    # cells drift decades in log-p space (measured: spikes/inf).
     loss_fn = nn.L1Loss(reduction='none')
+    if args.model == 'wavelet_deeponet':
+        loss_fn = nn.MSELoss(reduction='none')
     best_test_loss = float('inf')
     best_test_epoch = -1
     history = {'train_loss': [], 'test_loss': []}
