@@ -97,7 +97,7 @@ class MscaleDeepONet(nn.Module):
         super().__init__()
 
         if scales is None:
-            scales = [1.0, 2.0, 4.0, 8.0]
+            scales = [1.0, 2.0, 4.0, 8.0, 16, 32, 64, 128]
         n_scales = len(scales)
 
         # basis_size = number of trunk basis functions = trunk feature dim.

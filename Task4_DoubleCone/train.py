@@ -56,7 +56,7 @@ def build_model(model_name, use_fourier):
     elif model_name == 'vit': return VisionTransformer(in_channels=5, out_channels=4, embed_dim=512, depth=10, use_fourier=use_fourier)
     # Coordinate-based (branch = Mach/Temp/Re, trunk = x/y grid coords)
     elif model_name == 'hyperdeeponet': return HyperDeepONet(branch_hidden=45, trunk_hidden=64, trunk_depth=4, branch_depth=4, basis_size=128, use_fourier=use_fourier)
-    elif model_name == 'mscale_deeponet': return MscaleDeepONet(branch_hidden=200, branch_depth=5, trunk_hidden=200, trunk_depth=5, basis_size=128)
+    elif model_name == 'mscale_deeponet': return MscaleDeepONet(branch_hidden=256, branch_depth=5, trunk_hidden=128, trunk_depth=5, basis_size=128)
     elif model_name == 'hyper_mscale_deeponet': return HyperMscaleDeepONet(hidden_dim=55, depth=4, trunk_hidden=32, trunk_depth=4, basis_size=128)
     # Chunked hypernetwork: same generated trunk as HyperDeepONet (t_para=264,964) but emitted
     # in 512-wide chunks from a small branch (0.85M vs 34.2M)
