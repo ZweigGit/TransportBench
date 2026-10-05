@@ -20,6 +20,7 @@ from model_hyper_mscale_deeponet import HyperMscaleDeepONet
 from model_c_hyperdeeponet import c_HyperDeepONet
 from model_c_hyper_mscale_deeponet import c_HyperMscaleDeepONet
 from model_fusion_deeponet import Fusion_DeepONet
+from model_residual_fusion_deeponet import Residual_Fusion_DeepONet
 from model_wavelet_deeponet import WaveletDeepONet
 
 class GridAdapter(nn.Module):
@@ -38,7 +39,7 @@ class GridAdapter(nn.Module):
 
 def get_args():
     parser = argparse.ArgumentParser(description="Universal Golden Protocol Training Script")
-    parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'wavelet_deeponet'])
+    parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet'])
     parser.add_argument('--data_path', type=str, default='../data/double_cone_dataset_with_physics.pt')
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--epochs', type=int, default=2500)
@@ -56,7 +57,7 @@ def build_model(model_name, use_fourier):
     elif model_name == 'vit': return VisionTransformer(in_channels=5, out_channels=4, embed_dim=512, depth=10, use_fourier=use_fourier)
     # Coordinate-based (branch = Mach/Temp/Re, trunk = x/y grid coords)
     elif model_name == 'hyperdeeponet': return HyperDeepONet(branch_hidden=45, trunk_hidden=64, trunk_depth=4, branch_depth=4, basis_size=128, use_fourier=use_fourier)
-    elif model_name == 'mscale_deeponet': return MscaleDeepONet(branch_hidden=256, branch_depth=5, trunk_hidden=128, trunk_depth=5, basis_size=128)
+    elif model_name == 'mscale_deeponet': return MscaleDeepONet(branch_hidden=256, branch_depth=5, trunk_hidden=200, trunk_depth=5, basis_size=128)
     elif model_name == 'hyper_mscale_deeponet': return HyperMscaleDeepONet(hidden_dim=55, depth=4, trunk_hidden=32, trunk_depth=4, basis_size=128)
     # Chunked hypernetwork: same generated trunk as HyperDeepONet (t_para=264,964) but emitted
     # in 512-wide chunks from a small branch (0.85M vs 34.2M)
@@ -67,6 +68,9 @@ def build_model(model_name, use_fourier):
     # 1,010,312 params (~1.01M budget), branch [3,278,...,278,1112], trunk [2,278,...,278,278]
     elif model_name == 'fusion_deeponet': return Fusion_DeepONet(branch_dim=3, trunk_dim=2, hidden_dim=278, num_outputs=4,
                                                                  depth=5, activation='GELU')
+    # Same budget as fusion_deeponet; branch-to-trunk gate uses 1+skip (residual)
+    elif model_name == 'residual_fusion_deeponet': return Residual_Fusion_DeepONet(branch_dim=3, trunk_dim=2, hidden_dim=278, num_outputs=4,
+                                                                                   depth=5, activation='GELU')
     # db4 tensor-product wavelet dictionary trunk with per-branch residual-warp
     # FNNs + linear readouts (1824 frozen atoms, 13 branches x 24 = 312 trunk
     # features); plain full-rank branch head (~1.0M params)
@@ -81,7 +85,7 @@ def main():
     use_fourier = not args.no_fourier
     # Coordinate-based DeepONet variants, wrapped behind the grid image interface
     # so they train with the same curriculum-weighted MSE as grid models
-    coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'wavelet_deeponet'}
+    coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet'}
     # Coord variants without a Fourier option get no suffix (only hyperdeeponet supports it)
     fourierless = coord_models - {'hyperdeeponet'}
     fourier_suffix = "" if args.model in fourierless else ("_fourier" if use_fourier else "_nofourier")

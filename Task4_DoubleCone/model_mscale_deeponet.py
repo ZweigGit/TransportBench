@@ -18,13 +18,12 @@ class SinActivation(nn.Module):
 
 
 class _FNN(nn.Module):
-    """Fully-connected net: Linear -> LN -> Act -> ... -> Linear (LN like DeepONet2d)."""
+    """Fully-connected net: Linear -> Act -> ... -> Linear (no normalization)."""
     def __init__(self, dims, act):
         super().__init__()
         layers = []
         for i in range(len(dims) - 2):
             layers.append(nn.Linear(dims[i], dims[i + 1]))
-            layers.append(nn.LayerNorm(dims[i + 1]))
             layers.append(act)
         layers.append(nn.Linear(dims[-2], dims[-1]))
         self.net = nn.Sequential(*layers)
@@ -97,7 +96,7 @@ class MscaleDeepONet(nn.Module):
         super().__init__()
 
         if scales is None:
-            scales = [1.0, 2.0, 4.0, 8.0, 16, 32, 64, 128]
+            scales = [1.0, 2.0, 4.0, 8.0]
         n_scales = len(scales)
 
         # basis_size = number of trunk basis functions = trunk feature dim.
