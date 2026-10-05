@@ -22,6 +22,20 @@ from model_c_hyper_mscale_deeponet import c_HyperMscaleDeepONet
 from model_fusion_deeponet import Fusion_DeepONet
 from model_wavelet_deeponet import WaveletDeepONet
 
+class GridAdapter(nn.Module):
+    """Grid [B,5,H,W] interface for (branch, trunk) coordinate DeepONet variants:
+    branch = flow params (ch 2:5, constant per sample), trunk = shared grid
+    coords (ch 0:1). Output transposed from point-major [B,N,C] to [B,C,H,W]."""
+    def __init__(self, model):
+        super().__init__()
+        self.m = model
+
+    def forward(self, x):
+        B, _, H, W = x.shape
+        trunk = x[0, 0:2].permute(1, 2, 0).reshape(-1, 2)
+        out = self.m(x[:, 2:5, 0, 0], trunk)          # [B, H*W, C]
+        return out.permute(0, 2, 1).reshape(B, -1, H, W)
+
 def get_args():
     parser = argparse.ArgumentParser(description="Universal Golden Protocol Training Script")
     parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'wavelet_deeponet'])
@@ -65,9 +79,9 @@ def main():
     args = get_args()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     use_fourier = not args.no_fourier
-    # Coordinate-based DeepONet variants take (branch, trunk) instead of a grid image
+    # Coordinate-based DeepONet variants, wrapped behind the grid image interface
+    # so they train with the same curriculum-weighted MSE as grid models
     coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'wavelet_deeponet'}
-    data_mode = 'coord' if args.model in coord_models else 'grid'
     # Coord variants without a Fourier option get no suffix (only hyperdeeponet supports it)
     fourierless = coord_models - {'hyperdeeponet'}
     fourier_suffix = "" if args.model in fourierless else ("_fourier" if use_fourier else "_nofourier")
@@ -88,11 +102,10 @@ def main():
 
     train_loader, test_loader, x_norm, y_norm, vac = get_dataloader_and_stats(args.data_path, args.batch_size, device)
     vac = vac.to(device)
-    vac_flat = vac.reshape(-1)                    # [6528]
-    valid_w = (~vac_flat).float().unsqueeze(-1)   # [6528, 1], broadcasts over channels
-    valid_n = int(valid_w.sum().item())
-    
+
     model = build_model(args.model, use_fourier).to(device)
+    if args.model in coord_models:
+        model = GridAdapter(model).to(device)
     log(f"Model Parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.2f} M")
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
 
@@ -102,7 +115,7 @@ def main():
         steps_per_epoch=len(train_loader), pct_start=0.4, anneal_strategy='cos'
     )
 
-    loss_fn = nn.L1Loss(reduction='none')
+    loss_fn = nn.MSELoss(reduction='none')
     best_test_loss = float('inf')
     best_test_epoch = -1
     history = {'train_loss': [], 'test_loss': []}
@@ -127,30 +140,18 @@ def main():
             y_enc = y_norm.encode(y)
 
             optimizer.zero_grad()
-            if data_mode == 'coord':
-                # Branch = flow params (ch 2-4: Mach/Temp/Re, constant per sample),
-                # trunk = shared x/y grid coords (ch 0-1, identical across samples)
-                branch = x_enc[:, 2:5, 0, 0]                                  # [B, 3]
-                trunk = x_enc[0, 0:2].permute(1, 2, 0).reshape(-1, 2)          # [6528, 2]
-                target = y_enc.permute(0, 2, 3, 1).reshape(x_enc.shape[0], -1, 4)  # [B, 6528, 4]
-                out_enc = model(branch, trunk)
-                # Vacuum filler cells carry no physics: excluded from the loss
-                # (valid_w is constant, computed once above). Plain L1 otherwise:
-                # grid-position curriculum weights don't apply in flat space.
-                loss = (loss_fn(out_enc, target) * valid_w).sum() / (x_enc.shape[0] * valid_n * 4)
-            else:
-                out_enc = model(x_enc)
+            out_enc = model(x_enc)
 
-                # L1 Loss weight matrix
-                raw_loss = loss_fn(out_enc, y_enc)
-                w = torch.ones_like(raw_loss)
-                w[:, :, 2, :] = w_wall      # Wall
-                w[:, :, 1, :] = w_near      # Near-wall
-                w[:, :, 3, :] = w_near      # Near-wall
-                w[:, 3, :, :] *= w_p        # Pressure channel augmentation
-                w[:, :, vac] = 0.0          # Vacuum filler cells are not targets
+            # MSE loss weight matrix (paper Eq. 14) with spatial curriculum
+            raw_loss = loss_fn(out_enc, y_enc)
+            w = torch.ones_like(raw_loss)
+            w[:, :, 2, :] = w_wall      # Wall
+            w[:, :, 1, :] = w_near      # Near-wall
+            w[:, :, 3, :] = w_near      # Near-wall
+            w[:, 3, :, :] *= w_p        # Pressure channel augmentation
+            w[:, :, vac] = 0.0          # Vacuum filler cells are not targets
 
-                loss = (raw_loss * w).sum() / w.sum()
+            loss = (raw_loss * w).sum() / w.sum()
             loss.backward()
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -168,16 +169,9 @@ def main():
             for x_test, y_test in test_loader:
                 x_enc_test = x_norm.encode(x_test)
                 y_enc_test = y_norm.encode(y_test)
-                if data_mode == 'coord':
-                    branch = x_enc_test[:, 2:5, 0, 0]
-                    trunk = x_enc_test[0, 0:2].permute(1, 2, 0).reshape(-1, 2)
-                    target = y_enc_test.permute(0, 2, 3, 1).reshape(x_enc_test.shape[0], -1, 4)
-                    out_enc_test = model(branch, trunk)
-                    raw_test_loss = loss_fn(out_enc_test, target)[:, ~vac_flat, :].mean()
-                else:
-                    out_enc_test = model(x_enc_test)
-                    # Unweighted (vacuum-masked) L1 loss for validation
-                    raw_test_loss = loss_fn(out_enc_test, y_enc_test)[:, :, ~vac].mean()
+                out_enc_test = model(x_enc_test)
+                # Unweighted (vacuum-masked) MSE loss for validation
+                raw_test_loss = loss_fn(out_enc_test, y_enc_test)[:, :, ~vac].mean()
                 test_loss_val += raw_test_loss.item()
                 
         test_loss_val /= len(test_loader)

@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from data_loader import MinMaxNormalizer, get_split_indices, vacuum_mask
-from train import build_model  # single source of model configs, keeps eval in sync with train
+from train import build_model, GridAdapter  # single source of model configs, keeps eval in sync with train
 
 def get_args():
     parser = argparse.ArgumentParser(description="Evaluation for Task 4: Double Cone Flow")
@@ -30,9 +30,8 @@ def main():
     args = get_args()
     use_fourier = not args.no_fourier
     fourier_suffix = "_fourier" if use_fourier else "_nofourier"
-    # Coordinate-based DeepONet variants take (branch, trunk)
+    # Coordinate-based DeepONet variants, wrapped behind the grid image interface
     coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'wavelet_deeponet'}
-    data_mode = 'coord' if args.model in coord_models else 'grid'
     # Coord variants without a Fourier option get no suffix (only hyperdeeponet supports it)
     fourierless = coord_models - {'hyperdeeponet'}
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -82,7 +81,13 @@ def main():
     checkpoint_fourier = cfg.get('use_fourier', use_fourier)
     
     model = build_model(args.model, checkpoint_fourier).to(device)
-    model.load_state_dict(checkpoint.get('model_state', checkpoint))
+    if args.model in coord_models:
+        model = GridAdapter(model).to(device)
+    state = checkpoint.get('model_state', checkpoint)
+    if args.model in coord_models and not any(k.startswith('m.') for k in state):
+        # legacy checkpoint saved before the grid adapter: remap raw keys
+        state = {f'm.{k}': v for k, v in state.items()}
+    model.load_state_dict(state)
     model.eval()
 
     # Evaluate metrics on the test set (same split as training), in normalized [0,1] space
@@ -99,14 +104,7 @@ def main():
         bs = 8
         for s in range(0, x_test.shape[0], bs):
             x_enc_batch = x_norm.encode(x_test[s:s+bs])
-            if data_mode == 'coord':
-                # Branch = flow params (ch 2-4), trunk = shared grid coords (ch 0-1)
-                branch = x_enc_batch[:, 2:5, 0, 0]
-                trunk = x_norm.encode(x_test[0:1])[0, 0:2].permute(1, 2, 0).reshape(-1, 2)
-                # Model outputs [B, N, 4] (point-major, channel-last): transpose, not reshape
-                pred_enc = model(branch, trunk).permute(0, 2, 1).reshape(x_enc_batch.shape[0], 4, *x_enc_batch.shape[2:])
-            else:
-                pred_enc = model(x_enc_batch)
+            pred_enc = model(x_enc_batch)
             y_enc = y_norm.encode(y_test_log[s:s+bs])  # target in normalized [0,1] space
 
             # All metrics on the fluid domain only: zero out vacuum filler cells
@@ -161,13 +159,7 @@ def main():
 
         with torch.no_grad():
             x_encoded = x_norm.encode(x_input)
-            if data_mode == 'coord':
-                branch = x_encoded[:, 2:5, 0, 0]
-                trunk = x_encoded[0, 0:2].permute(1, 2, 0).reshape(-1, 2)
-                # Model outputs [B, N, 4] (point-major, channel-last): transpose, not reshape
-                pred_encoded = model(branch, trunk).permute(0, 2, 1).reshape(1, 4, *x_encoded.shape[2:])
-            else:
-                pred_encoded = model(x_encoded)
+            pred_encoded = model(x_encoded)
             y_pred_log = y_norm.decode(pred_encoded)
 
         y_pred_phys = y_pred_log.clone()
