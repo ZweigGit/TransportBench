@@ -190,7 +190,10 @@ def main():
             gt, pred, e = y_true[var_idx], y_pred[var_idx], err[var_idx]
 
             l2_err = np.linalg.norm(e[valid2d]) / (np.linalg.norm(gt[valid2d]) + 1e-8)
-            vmin, vmax = min(gt.min(), pred.min()), max(np.percentile(gt, 99), np.percentile(pred, 99))
+            # fields carry NaN in vacuum cells; nan-unaware min/percentile would
+            # poison the clim and matplotlib would fall back to (-0.1, 0.1)
+            vmin = min(np.nanmin(gt), np.nanmin(pred))
+            vmax = max(np.nanpercentile(gt, 99), np.nanpercentile(pred, 99))
 
             ax1 = fig.add_subplot(gs[row_idx, 0])
             im1 = ax1.pcolormesh(Grid_X, Grid_Y, gt, cmap=cmap, shading='gouraud', vmin=vmin, vmax=vmax)
