@@ -22,6 +22,7 @@ from model_c_hyper_mscale_deeponet import c_HyperMscaleDeepONet
 from model_fusion_deeponet import Fusion_DeepONet
 from model_residual_fusion_deeponet import Residual_Fusion_DeepONet
 from model_mr_deeponet import MR_DeepONet
+from model_mwavelet_deeponet import MwaveletDeepONet
 from model_wavelet_deeponet import WaveletDeepONet
 
 class GridAdapter(nn.Module):
@@ -40,7 +41,7 @@ class GridAdapter(nn.Module):
 
 def get_args():
     parser = argparse.ArgumentParser(description="Universal Golden Protocol Training Script")
-    parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet'])
+    parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet'])
     parser.add_argument('--data_path', type=str, default='../data/double_cone_dataset_with_physics.pt')
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--epochs', type=int, default=2500)
@@ -78,10 +79,15 @@ def build_model(model_name, use_fourier):
                                                          depth=4, levels=4, activation='GELU',
                                                          wavelet='db4', stride=2)
     # Gabor-wavelet trunk: complex FNN (one complex param = 2 real dof,
-    # ~0.97M real dof), real part of trunk features into the dot product
+    # ~0.99M real dof), real part of trunk features into the dot product
     elif model_name == 'wavelet_deeponet': return WaveletDeepONet(branch_dim=3, trunk_dim=2, branch_hidden=256,
                                                                   trunk_hidden=256, branch_depth=5, trunk_depth=5,
-                                                                  basis_size=128)
+                                                                  basis_size=128, s0=3.0, w0=3.0)
+    # Multi-branch Gabor trunk (Julia MwaveletNN): scales live in the
+    # per-branch (w0, s0) = (1,1),(2,2),(3,3),(4,4) activation, ~1.0M real dof
+    elif model_name == 'mwavelet_deeponet': return MwaveletDeepONet(branch_dim=3, trunk_dim=2, branch_hidden=256,
+                                                                    trunk_hidden=160, branch_depth=4, trunk_depth=4,
+                                                                    basis_size=128)
 
 def main():
     args = get_args()
@@ -89,7 +95,7 @@ def main():
     use_fourier = not args.no_fourier
     # Coordinate-based DeepONet variants, wrapped behind the grid image interface
     # so they train with the same curriculum-weighted MSE as grid models
-    coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet'}
+    coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet'}
     # Coord variants without a Fourier option get no suffix (only hyperdeeponet supports it)
     fourierless = coord_models - {'hyperdeeponet'}
     fourier_suffix = "" if args.model in fourierless else ("_fourier" if use_fourier else "_nofourier")
