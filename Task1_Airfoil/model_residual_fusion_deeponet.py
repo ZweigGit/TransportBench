@@ -81,15 +81,17 @@ class Residual_Fusion_DeepONet(nn.Module):
         """
 
         if x_trunk.dim() == 2:
-            # [N, trunk_dim] -> [1, N, trunk_dim] -> [B, N, trunk_dim]
-            x_trunk = x_trunk.unsqueeze(0).repeat(x_branch.shape[0], 1, 1)
+            # Shared 2D trunk: [N, trunk_dim] -> [B, N, trunk_dim] (view, no copy)
+            B = x_branch.shape[0]
+            x_trunk = x_trunk.unsqueeze(0).expand(B, -1, -1)
 
         skip = []
 
         for i in range(self.L-1):
 
-            x_branch = self.act(10*self.ab[i]*self.branch_net[i](x_branch)+self.cb[i])+\
-            10*self.a1b[i]*self.act2(10*self.F1b[i]*self.branch_net[i](x_branch)+self.c1b[i])
+            z_b = self.branch_net[i](x_branch)
+            x_branch = self.act(10*self.ab[i]*z_b+self.cb[i])+\
+            10*self.a1b[i]*self.act2(10*self.F1b[i]*z_b+self.c1b[i])
             skip.append(x_branch)
 
         for i in range(1,self.L-1):
@@ -97,8 +99,9 @@ class Residual_Fusion_DeepONet(nn.Module):
 
         for i in range(self.L-1):
 
-            x_trunk = self.act(10*self.at[i]*self.trunk_net[i](x_trunk)+self.ct[i])+\
-            10*self.a1t[i]*self.act2(10*self.F1t[i]*self.trunk_net[i](x_trunk)+self.c1t[i])
+            z_t = self.trunk_net[i](x_trunk)
+            x_trunk = self.act(10*self.at[i]*z_t+self.ct[i])+\
+            10*self.a1t[i]*self.act2(10*self.F1t[i]*z_t+self.c1t[i])
 
             # Residual gate: identity path preserves trunk magnitude/gradient
             x_trunk = torch.einsum('bk,bik->bik', 1.0 + skip[i], x_trunk)
