@@ -131,7 +131,7 @@ def main():
                                 basis_size=128, w0=3.0, s0=3.0)
 
     model = model.to(device)
-    print(f"Model Parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.2f} M")
+    print(f"Model Parameters: {sum(p.numel() * (2 if p.is_complex() else 1) for p in model.parameters()) / 1e6:.2f} M")
 
     # 4. Define optimizer and loss function (Masked L1 or MSE)
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
