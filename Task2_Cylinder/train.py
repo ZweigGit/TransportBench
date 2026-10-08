@@ -105,10 +105,10 @@ def main():
         model = Residual_Fusion_DeepONet(branch_dim=2, trunk_dim=2, hidden_dim=278, num_outputs=4,
                                          depth=5, activation='GELU')
     elif args.model == 'wavelet_deeponet':
-        # 1,049,348 real dof (~1.05M budget); complex trunk params count as 2
+        # 991,748 real dof (~1.00M budget); complex trunk params count as 2
         model = WaveletDeepONet(branch_dim=2, trunk_dim=2, branch_hidden=256,
-                                trunk_hidden=224, branch_depth=5, trunk_depth=5,
-                                basis_size=256, w0=3.0, s0=3.0)
+                                trunk_hidden=256, branch_depth=5, trunk_depth=5,
+                                basis_size=128, w0=3.0, s0=3.0)
 
     model = model.to(device)
     print(f"Model Parameters: {sum(p.numel() for p in model.parameters()) / 1e6:.2f} M")
