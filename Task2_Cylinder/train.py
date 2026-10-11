@@ -116,6 +116,9 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
     # Paper: no scheduler for Tasks I-III
     criterion = nn.MSELoss()
+    # Fluid-only points for deeponet-family loss (cylinder interior excluded,
+    # Task4 vacuum-mask protocol); grid models keep the full-grid criterion
+    fluid = dataset.fluid_mask.to(device) if data_mode == 'deeponet' else None
 
     best_test_loss = float('inf')
     history = {'train_loss': [], 'test_loss': []}
@@ -132,13 +135,14 @@ def main():
             if data_mode == 'grid':
                 x, y = batch[0].to(device), batch[1].to(device)
                 pred = model(x)
+                loss = criterion(pred, y)
             else:
                 x_branch, x_trunk, y = batch[0].to(device), batch[1].to(device), batch[2].to(device)
                 x_branch = x_branch[:, :2]  # (Kn, Ma)
                 x_trunk = x_trunk[0]  # All samples share the same grid
                 pred = model(x_branch, x_trunk)
+                loss = torch.nn.functional.mse_loss(pred[:, fluid], y[:, fluid])
 
-            loss = criterion(pred, y)
             loss.backward()
             optimizer.step()
             train_loss_acc += loss.item()
@@ -154,13 +158,14 @@ def main():
                 if data_mode == 'grid':
                     x, y = batch[0].to(device), batch[1].to(device)
                     pred = model(x)
+                    loss = criterion(pred, y)
                 else:
                     x_branch, x_trunk, y = batch[0].to(device), batch[1].to(device), batch[2].to(device)
                     x_branch = x_branch[:, :2]
                     x_trunk = x_trunk[0]
                     pred = model(x_branch, x_trunk)
+                    loss = torch.nn.functional.mse_loss(pred[:, fluid], y[:, fluid])
 
-                loss = criterion(pred, y)
                 test_loss_acc += loss.item()
 
         avg_test_loss = test_loss_acc / len(test_loader)

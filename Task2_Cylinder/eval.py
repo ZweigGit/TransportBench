@@ -119,20 +119,30 @@ def main():
     # Load full dataset for cylinder mask (visualization only)
     full_dataset = CylinderDataset(args.data_path, mode='grid')
 
+    # Fluid-only metrics: exclude cylinder-interior filler points (same
+    # protocol as the training loss)
+    fluid = dataset.fluid_mask                      # [H*W] bool
+    n_fluid = int(fluid.sum().item())
+    fluid = fluid.to(device)
+    fluid_2d = fluid.view(GRID_H, GRID_W)           # for grid-mode [B, C, H, W] tensors
+    print(f"Fluid-only metrics: {n_fluid}/{fluid.numel()} points")
+
     with torch.no_grad():
         for i, batch in enumerate(test_loader):
             if data_mode == 'grid':
                 x, y = batch[0].to(device), batch[1].to(device)
                 pred = model(x)
+                y_m, pred_m = y[:, :, fluid_2d], pred[:, :, fluid_2d]
             else:
                 x_branch, x_trunk, y = batch[0].to(device), batch[1].to(device), batch[2].to(device)
                 x_branch = x_branch[:, :2]
                 x_trunk = x_trunk[0]
                 pred = model(x_branch, x_trunk)
+                y_m, pred_m = y[:, fluid], pred[:, fluid]
 
-            total_mae += criterion_mae(pred, y).item()
-            total_mse += criterion_mse(pred, y).item()
-            l2_err = torch.norm(pred - y, p=2) / (torch.norm(y, p=2) + 1e-8)
+            total_mae += criterion_mae(pred_m, y_m).item()
+            total_mse += criterion_mse(pred_m, y_m).item()
+            l2_err = torch.norm(pred_m - y_m, p=2) / (torch.norm(y_m, p=2) + 1e-8)
             total_l2_error += l2_err.item()
 
             # Collect samples for visualization
@@ -155,7 +165,7 @@ def main():
                 })
 
     num_samples = len(test_loader.dataset)
-    num_elements = num_samples * np.prod(y.shape[1:])
+    num_elements = num_samples * n_fluid * 4
 
     final_mae = total_mae / num_elements
     final_mse = total_mse / num_elements
@@ -173,7 +183,7 @@ def main():
     with open(eval_file, 'w', encoding='utf-8') as f:
         f.write(f"Model       : {args.model.upper()}\n")
         f.write(f"Checkpoint  : {ckpt_path}\n")
-        f.write(f"Metric space: normalized [0,1]\n")
+        f.write(f"Metric space: normalized [0,1], fluid-only ({n_fluid} pts)\n")
         f.write(f"MAE         : {final_mae:.4g}\n")
         f.write(f"MSE         : {final_mse:.4g}\n")
         f.write(f"RL2E        : {final_rel_l2:.4g}\n")

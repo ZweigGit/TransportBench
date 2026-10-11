@@ -123,6 +123,10 @@ def main():
         full_dataset = AirfoilDataset(args.data_path, mode='fno')  # Use 'fno' mode to get masks
         test_indices = test_loader.dataset.indices  # Get test set indices
 
+    # Fluid-element accumulator: per-sample geometry masks differ (100 airfoil
+    # shapes), so the MAE/MSE denominator is the summed fluid count, not a constant
+    total_fluid = 0.0
+
     with torch.no_grad():
         for i, batch in enumerate(test_loader):
             if data_mode == 'fno':
@@ -147,6 +151,7 @@ def main():
                 mask = mask_2d.view(1, -1, 1)  # [1, 16384, 1]
 
             # Apply mask
+            total_fluid += mask.sum().item()
             pred_masked = pred * mask
             y_masked = y * mask
 
@@ -180,7 +185,9 @@ def main():
                 })
 
     num_samples = len(test_loader.dataset)
-    num_elements = num_samples * np.prod(y_masked.shape[1:]) # Total number of elements
+    # Fluid-only element count: mean over the points the masks kept, x 4 channels
+    num_elements = total_fluid * 4
+    print(f"Fluid-only metrics: {int(total_fluid)} points over {num_samples} samples")
     
     final_mae = total_mae / num_elements
     final_mse = total_mse / num_elements

@@ -22,7 +22,14 @@ class CylinderDataset(Dataset):
         self.H, self.W = self.flow_label.shape[1], self.flow_label.shape[2]
         self.train_min = None
         self.train_max = None
-        print(f"Data loaded. Samples: {self.n_samples}, Grid: {self.H}x{self.W}")
+
+        # Fluid points (outside cylinder), shared grid: [H*W] bool, True where
+        # EVERY sample marks fluid (mask >= 0.5). Cylinder-interior cells are
+        # non-physical fillers and are excluded from training/val loss
+        # (Task4 vacuum-mask protocol).
+        self.fluid_mask = (self.mask[:, 0] >= 0.5).all(dim=0).reshape(-1)
+        print(f"Data loaded. Samples: {self.n_samples}, Grid: {self.H}x{self.W}, "
+              f"Fluid points: {self.fluid_mask.sum().item()}/{self.fluid_mask.numel()}")
 
     def __len__(self):
         return self.n_samples
