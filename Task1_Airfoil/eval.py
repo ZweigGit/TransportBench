@@ -21,12 +21,13 @@ from model_c_hyperdeeponet import c_HyperDeepONet
 from model_fusion_deeponet import Fusion_DeepONet
 from model_residual_fusion_deeponet import Residual_Fusion_DeepONet
 from model_wavelet_deeponet import WaveletDeepONet
+from model_residual_fusion_wavelet_deeponet import Residual_Fusion_Wavelet_DeepONet
 from data_loader import AirfoilDataset
 
 def get_args():
     parser = argparse.ArgumentParser(description="Evaluation Script for Task I: Airfoil Flow")
     parser.add_argument('--model', type=str, required=True,
-                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'hyper_wavelet_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet'],
+                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'hyper_wavelet_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet', 'residual_fusion_wavelet_deeponet'],
                         help='Choose the baseline model to evaluate')
     parser.add_argument('--data_path', type=str, default='data/airfoil_unified_128x128.pt', help='Path to dataset')
     parser.add_argument('--checkpoint', type=str, default=None, help='Path to weights (default: output/<model>/best_model.pth)')
@@ -99,6 +100,13 @@ def main():
         model = WaveletDeepONet(branch_dim=674, trunk_dim=2, branch_hidden=204,
                                 trunk_hidden=256, branch_depth=5, trunk_depth=5,
                                 basis_size=128, w0=3.0, s0=3.0)
+    elif args.model == 'residual_fusion_wavelet_deeponet':
+        # 1,006,828 real dof (~1.01M budget); residual-fusion branch + complex Gabor
+        # trunk, both width 235 (elementwise gate forces equal widths; complex = 2 dof)
+        model = Residual_Fusion_Wavelet_DeepONet(branch_dim=674, trunk_dim=2,
+                                                 hidden_dim=235, trunk_hidden=235,
+                                                 num_outputs=4, depth=5,
+                                                 basis_size=128, w0=3.0, s0=3.0)
 
     model = model.to(device)
     

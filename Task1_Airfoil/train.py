@@ -24,13 +24,14 @@ from model_c_hyperdeeponet import c_HyperDeepONet
 from model_fusion_deeponet import Fusion_DeepONet
 from model_residual_fusion_deeponet import Residual_Fusion_DeepONet
 from model_wavelet_deeponet import WaveletDeepONet
+from model_residual_fusion_wavelet_deeponet import Residual_Fusion_Wavelet_DeepONet
 # Import custom Dataset
 from data_loader import AirfoilDataset
 
 def get_args():
     parser = argparse.ArgumentParser(description="TransportBench - Task I: Airfoil Flow")
     parser.add_argument('--model', type=str, required=True,
-                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'hyper_wavelet_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet'],
+                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'hyper_wavelet_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet', 'residual_fusion_wavelet_deeponet'],
                         help='Choose the baseline model')
     parser.add_argument('--epochs', type=int, default=2500, help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
@@ -135,6 +136,13 @@ def main():
         model = WaveletDeepONet(branch_dim=674, trunk_dim=2, branch_hidden=204,
                                 trunk_hidden=256, branch_depth=5, trunk_depth=5,
                                 basis_size=128, w0=3.0, s0=3.0)
+    elif args.model == 'residual_fusion_wavelet_deeponet':
+        # 1,006,828 real dof (~1.01M budget); residual-fusion branch + complex Gabor
+        # trunk, both width 235 (elementwise gate forces equal widths; complex = 2 dof)
+        model = Residual_Fusion_Wavelet_DeepONet(branch_dim=674, trunk_dim=2,
+                                                 hidden_dim=235, trunk_hidden=235,
+                                                 num_outputs=4, depth=5,
+                                                 basis_size=128, w0=3.0, s0=3.0)
 
     model = model.to(device)
     print(f"Model Parameters: {sum(p.numel() * (2 if p.is_complex() else 1) for p in model.parameters()) / 1e6:.2f} M")
