@@ -16,6 +16,7 @@ from model_pt import PointTransformerONet
 from model_mscale_deeponet import MscaleDeepONet
 from model_hyperdeeponet import HyperDeepONet
 from model_hyper_mscale_deeponet import HyperMscaleDeepONet
+from model_hyper_wavelet_deeponet import HyperWaveletDeepONet
 from model_c_hyperdeeponet import c_HyperDeepONet
 from model_fusion_deeponet import Fusion_DeepONet
 from model_residual_fusion_deeponet import Residual_Fusion_DeepONet
@@ -25,7 +26,7 @@ from data_loader import AirfoilDataset
 def get_args():
     parser = argparse.ArgumentParser(description="Evaluation Script for Task I: Airfoil Flow")
     parser.add_argument('--model', type=str, required=True,
-                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet'],
+                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'hyper_wavelet_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet'],
                         help='Choose the baseline model to evaluate')
     parser.add_argument('--data_path', type=str, default='data/airfoil_unified_128x128.pt', help='Path to dataset')
     parser.add_argument('--checkpoint', type=str, default=None, help='Path to weights (default: output/<model>/best_model.pth)')
@@ -80,6 +81,11 @@ def main():
     elif args.model == 'hyper_mscale_deeponet':
         model = HyperMscaleDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=67, num_outputs=4,
                                     depth=4, activation='GELU')
+    elif args.model == 'hyper_wavelet_deeponet':
+        # 1,001,437 params (~1.00M budget); complex trunk weights/biases + w0/s0 all from branch
+        model = HyperWaveletDeepONet(branch_dim=674, trunk_dim=2, branch_hidden=63,
+                                     trunk_hidden=48, branch_depth=4, trunk_depth=4,
+                                     num_outputs=4, w0=1.0, s0=1.0)
     elif args.model == 'fusion_deeponet':
         # 1,007,000 params (~1.01M budget), branch [674,253,...,253,1012], trunk [2,253,...,253,253]
         model = Fusion_DeepONet(branch_dim=674, trunk_dim=2, hidden_dim=253, num_outputs=4,

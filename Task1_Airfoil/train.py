@@ -19,6 +19,7 @@ from model_pt import PointTransformerONet
 from model_mscale_deeponet import MscaleDeepONet
 from model_hyperdeeponet import HyperDeepONet
 from model_hyper_mscale_deeponet import HyperMscaleDeepONet
+from model_hyper_wavelet_deeponet import HyperWaveletDeepONet
 from model_c_hyperdeeponet import c_HyperDeepONet
 from model_fusion_deeponet import Fusion_DeepONet
 from model_residual_fusion_deeponet import Residual_Fusion_DeepONet
@@ -29,7 +30,7 @@ from data_loader import AirfoilDataset
 def get_args():
     parser = argparse.ArgumentParser(description="TransportBench - Task I: Airfoil Flow")
     parser.add_argument('--model', type=str, required=True,
-                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet'],
+                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'hyper_wavelet_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet'],
                         help='Choose the baseline model')
     parser.add_argument('--epochs', type=int, default=2500, help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
@@ -116,6 +117,11 @@ def main():
     elif args.model == 'hyper_mscale_deeponet':
         model = HyperMscaleDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=67, num_outputs=4,
                                     depth=4, activation='GELU')
+    elif args.model == 'hyper_wavelet_deeponet':
+        # 1,001,437 params (~1.00M budget); complex trunk weights/biases + w0/s0 all from branch
+        model = HyperWaveletDeepONet(branch_dim=674, trunk_dim=2, branch_hidden=63,
+                                     trunk_hidden=48, branch_depth=4, trunk_depth=4,
+                                     num_outputs=4, w0=1.0, s0=1.0)
     elif args.model == 'fusion_deeponet':
         # 1,007,000 params (~1.01M budget), branch [674,253,...,253,1012], trunk [2,253,...,253,253]
         model = Fusion_DeepONet(branch_dim=674, trunk_dim=2, hidden_dim=253, num_outputs=4,
@@ -137,7 +143,6 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
     # Paper: no scheduler for Tasks I-III
     # scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
-    criterion = nn.MSELoss()
 
     # ================= Core: Logic for saving the best model =================
     best_test_loss = float('inf')
@@ -156,7 +161,7 @@ def main():
                 x, y = batch[0].to(device), batch[1].to(device)
                 pred = model(x)
                 mask = x[:, 0:1, :, :] # Extract geometry mask
-                loss = criterion(pred * mask, y * mask)
+                loss = ((pred - y) ** 2 * mask).sum() / (mask.sum() * 4)  # fluid-only MSE, matches eval
             else:
                 # Coordinate-based models (DeepONet, PT)
                 batch_indices, x_branch, x_trunk, y = batch
@@ -181,7 +186,7 @@ def main():
                 mask = torch.stack(masks, dim=0).to(device)  # [B, 16384, 1]
 
                 # Masked MSE (paper Eq. 14): exclude solid interior points
-                loss = criterion(pred * mask, y * mask)
+                loss = ((pred - y) ** 2 * mask).sum() / (mask.sum() * 4)  # fluid-only MSE, matches eval
             loss.backward()
             optimizer.step()
             train_loss_acc += loss.item()
@@ -199,7 +204,7 @@ def main():
                     x, y = batch[0].to(device), batch[1].to(device)
                     pred = model(x)
                     mask = x[:, 0:1, :, :]
-                    loss = criterion(pred * mask, y * mask)
+                    loss = ((pred - y) ** 2 * mask).sum() / (mask.sum() * 4)  # fluid-only MSE, matches eval
                 else:
                     batch_indices, x_branch, x_trunk, y = batch
                     x_branch = x_branch.to(device)
@@ -222,7 +227,7 @@ def main():
                         masks.append(mask_source.geo_mask[orig_idx].reshape(-1, 1))
                     mask = torch.stack(masks, dim=0).to(device)
 
-                    loss = criterion(pred * mask, y * mask)
+                    loss = ((pred - y) ** 2 * mask).sum() / (mask.sum() * 4)  # fluid-only MSE, matches eval
                     
                 test_loss_acc += loss.item()
                 
