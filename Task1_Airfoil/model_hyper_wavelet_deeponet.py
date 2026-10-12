@@ -3,16 +3,14 @@ HyperWaveletDeepONet: HyperMscaleDeepONet whose trunk is the complex Gabor FNN
 of WaveletDeepONet.
 
 Branch net outputs all trunk parameters — complex weights and biases (real and
-imaginary parts packed in the flat output vector) plus the Gabor wavelet's w0
-and s0 — so no learned parameters live in the trunk; the trunk FNN itself maps
-coordinates directly to the num_outputs channels (no basis expansion).
+imaginary parts packed in the flat output vector) — so no learned parameters
+live in the trunk; the trunk FNN itself maps coordinates directly to the
+num_outputs channels (no basis expansion). The Gabor w0/s0 are fixed
+hyperparameters, as in WaveletDeepONet.
 """
-
-import math
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 def _compute_weight_bias(dims):
@@ -43,9 +41,8 @@ class HyperWaveletDeepONet(nn.Module):
     trunk parameters.
 
     Branch net outputs one complex trunk FNN (real/imag parts of every weight
-    and bias) plus per-sample w0 and s0 for the Gabor activation
-    psi(z) = exp(i*w0*z) * exp(-|s0*z|^2). The real part of the complex trunk
-    output is the prediction; no learned parameters in the trunk.
+    and bias). The real part of the complex trunk output is the prediction; no
+    learned parameters in the trunk.
 
     Args:
         branch_dim:   Input dimension of the branch net (sensor values).
@@ -53,18 +50,16 @@ class HyperWaveletDeepONet(nn.Module):
         branch_hidden / branch_depth: Branch net width / hidden layers.
         trunk_hidden / trunk_depth:   Trunk FNN width / hidden layers.
         num_outputs:  Number of output channels.
-        w0, s0:       Gabor wavelet frequency / dilation init values (init 1.0).
-                      Branch outputs are softplus-anchored so the decoded values
-                      stay > 0 during training and a zero output decodes to 1.0.
+        w0, s0:       Gabor wavelet frequency / dilation (fixed, not learned).
     """
     def __init__(self, branch_dim=674, trunk_dim=2, branch_hidden=63,
                  trunk_hidden=48, branch_depth=4, trunk_depth=4,
-                 num_outputs=4, w0=1.0, s0=1.0):
+                 num_outputs=4, w0=3.0, s0=3.0):
         super().__init__()
 
         self.num_outputs = num_outputs
-        self._w0_default = math.log(math.expm1(w0))  # softplus inverse
-        self._s0_default = math.log(math.expm1(s0))
+        self._w0 = w0
+        self._s0 = s0
 
         # --- Compute total parameters needed to construct the hyper-trunk ---
         # Trunk FNN: [trunk_dim] + [trunk_hidden] * trunk_depth
@@ -73,7 +68,7 @@ class HyperWaveletDeepONet(nn.Module):
         # Output layer: trunk_hidden -> num_outputs
         output_dims = [trunk_hidden, num_outputs]
 
-        t_para = _compute_weight_bias(trunk_dims) + _compute_weight_bias(output_dims) + 2  # +2: w0, s0
+        t_para = _compute_weight_bias(trunk_dims) + _compute_weight_bias(output_dims)
 
         # --- Branch net ---
         self.branch_net = _MLP([branch_dim] + [branch_hidden] * branch_depth + [t_para])
@@ -98,16 +93,12 @@ class HyperWaveletDeepONet(nn.Module):
     def _trunk_forward(self, params, x_trunk):
         """Hypernetwork trunk forward using branch-provided weights/biases.
 
-        params: [B, t_para] — flattened complex trunk weights, biases, w0, s0
+        params: [B, t_para] — flattened complex trunk weights and biases
         x_trunk: [N, trunk_dim] or [B, N, trunk_dim]
         """
         if x_trunk.dim() == 2:
             x_trunk = x_trunk.unsqueeze(0)  # [1, N, trunk_dim]
         B = params.shape[0]
-
-        # --- Extract w0/s0 from end of params; softplus guarantees > 0 ---
-        w0 = F.softplus(self._w0_default + params[:, -2])  # [B]
-        s0 = F.softplus(self._s0_default + params[:, -1])  # [B]
 
         y = x_trunk.to(torch.complex64).expand(B, -1, -1)  # [B, N, trunk_dim]
 
@@ -118,8 +109,8 @@ class HyperWaveletDeepONet(nn.Module):
             d_out = self._trunk_dims[i + 1]
             y, start = self._apply_layer(params, y, d_in, d_out, start)
             # psi(z) = exp(i*w0*z) * exp(-|s0*z|^2); |s0*z|^2 = s0^2*|z|^2
-            env = (s0 ** 2).view(B, 1, 1) * (y.real.square() + y.imag.square())
-            y = torch.exp(1j * w0.view(B, 1, 1) * y - env)
+            env = (self._s0 ** 2) * (y.real.square() + y.imag.square())
+            y = torch.exp(1j * self._w0 * y - env)
 
         # --- Output layer (no activation), real part as prediction ---
         d_oin, d_oout = self._output_dims[0], self._output_dims[1]
@@ -148,11 +139,6 @@ if __name__ == "__main__":
     out = m(xb, xt)
     assert out.shape == (4, 100, 4)
     assert torch.isfinite(out).all()
-    anchor = math.log(math.e - 1.0)
-    assert torch.allclose(F.softplus(anchor + torch.zeros(1)), torch.ones(1))  # zero offset -> 1.0
-    with torch.no_grad():  # decoded w0/s0 stay > 0 for any branch output
-        p = m.branch_net(xb)
-        assert (F.softplus(anchor + p[:, -2]) > 0).all() and (F.softplus(anchor + p[:, -1]) > 0).all()
     out.sum().backward()  # grads reach every branch param
     assert all(p.grad is not None and torch.isfinite(p.grad).all()
                for p in m.parameters())

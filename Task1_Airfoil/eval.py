@@ -82,10 +82,10 @@ def main():
         model = HyperMscaleDeepONet(branch_dim=674, trunk_dim=2, hidden_dim=67, num_outputs=4,
                                     depth=4, activation='GELU')
     elif args.model == 'hyper_wavelet_deeponet':
-        # 1,001,437 params (~1.00M budget); complex trunk weights/biases + w0/s0 all from branch
+        # 1,001,309 params (~1.00M budget); complex trunk weights/biases from branch, w0/s0 fixed 3.0
         model = HyperWaveletDeepONet(branch_dim=674, trunk_dim=2, branch_hidden=63,
                                      trunk_hidden=48, branch_depth=4, trunk_depth=4,
-                                     num_outputs=4, w0=1.0, s0=1.0)
+                                     num_outputs=4, w0=3.0, s0=3.0)
     elif args.model == 'fusion_deeponet':
         # 1,007,000 params (~1.01M budget), branch [674,253,...,253,1012], trunk [2,253,...,253,253]
         model = Fusion_DeepONet(branch_dim=674, trunk_dim=2, hidden_dim=253, num_outputs=4,
