@@ -2,7 +2,6 @@ import os
 import argparse
 import random
 import torch
-import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import matplotlib.pyplot as plt
@@ -115,10 +114,10 @@ def main():
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
     # Paper: no scheduler for Tasks I-III
-    criterion = nn.MSELoss()
-    # Fluid-only points for deeponet-family loss (cylinder interior excluded,
-    # Task4 vacuum-mask protocol); grid models keep the full-grid criterion
-    fluid = dataset.fluid_mask.to(device) if data_mode == 'deeponet' else None
+    # Fluid-only points for all losses (cylinder interior excluded, Task4
+    # vacuum-mask protocol); grid models index [B, C, H, W] with the 2D view
+    fluid = dataset.fluid_mask.to(device)                       # [H*W] bool
+    fluid_2d = fluid.view(128, 192)
 
     best_test_loss = float('inf')
     history = {'train_loss': [], 'test_loss': []}
@@ -135,7 +134,7 @@ def main():
             if data_mode == 'grid':
                 x, y = batch[0].to(device), batch[1].to(device)
                 pred = model(x)
-                loss = criterion(pred, y)
+                loss = torch.nn.functional.mse_loss(pred[:, :, fluid_2d], y[:, :, fluid_2d])
             else:
                 x_branch, x_trunk, y = batch[0].to(device), batch[1].to(device), batch[2].to(device)
                 x_branch = x_branch[:, :2]  # (Kn, Ma)
@@ -158,7 +157,7 @@ def main():
                 if data_mode == 'grid':
                     x, y = batch[0].to(device), batch[1].to(device)
                     pred = model(x)
-                    loss = criterion(pred, y)
+                    loss = torch.nn.functional.mse_loss(pred[:, :, fluid_2d], y[:, :, fluid_2d])
                 else:
                     x_branch, x_trunk, y = batch[0].to(device), batch[1].to(device), batch[2].to(device)
                     x_branch = x_branch[:, :2]
