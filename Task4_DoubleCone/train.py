@@ -49,6 +49,7 @@ def get_args():
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--no_fourier', action='store_true', help='Disable Fourier Encoding')
     parser.add_argument('--save_dir', type=str, default='./checkpoints')
+    parser.add_argument('--seed', type=int, default=42)
     return parser.parse_args()
 
 def build_model(model_name, use_fourier):
@@ -60,7 +61,9 @@ def build_model(model_name, use_fourier):
     elif model_name == 'vit': return VisionTransformer(in_channels=5, out_channels=4, embed_dim=512, depth=10, use_fourier=use_fourier)
     # Coordinate-based (branch = Mach/Temp/Re, trunk = x/y grid coords)
     elif model_name == 'hyperdeeponet': return HyperDeepONet(branch_hidden=45, trunk_hidden=64, trunk_depth=4, branch_depth=4, basis_size=128, use_fourier=use_fourier)
-    elif model_name == 'mscale_deeponet': return MscaleDeepONet(branch_hidden=256, branch_depth=5, trunk_hidden=200, trunk_depth=5, basis_size=128)
+    # Single-trunk ablation of the multi-scale trunk (no scale branches, no
+    # frequency scaling): branch [3,313x5,512], trunk [2,313x5,128], 995,667 params
+    elif model_name == 'mscale_deeponet': return MscaleDeepONet(branch_dim=3, trunk_dim=2, hidden=313, num_outputs=4, depth=5, basis_size=128)
     elif model_name == 'hyper_mscale_deeponet': return HyperMscaleDeepONet(hidden_dim=55, depth=4, trunk_hidden=32, trunk_depth=4, basis_size=128)
     # Chunked hypernetwork: same generated trunk as HyperDeepONet (t_para=264,964) but emitted
     # in 512-wide chunks from a small branch (0.85M vs 34.2M)
@@ -98,6 +101,11 @@ def build_model(model_name, use_fourier):
 
 def main():
     args = get_args()
+    # Seed init + DataLoader shuffle (GPU kernels stay nondeterministic;
+    # add cudnn.deterministic/use_deterministic_algorithms for bitwise runs)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
+    np.random.seed(args.seed)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     use_fourier = not args.no_fourier
     # Coordinate-based DeepONet variants, wrapped behind the grid image interface

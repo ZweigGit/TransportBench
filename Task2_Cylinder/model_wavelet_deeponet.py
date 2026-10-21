@@ -58,13 +58,12 @@ class _GaborTrunk(nn.Module):
 
 
 class _FNN(nn.Module):
-    """Real FNN: Linear -> LN -> GELU -> ... -> Linear (branch, like MscaleDeepONet)."""
+    """Real FNN: Linear -> GELU -> ... -> Linear (branch)."""
     def __init__(self, dims):
         super().__init__()
         layers = []
         for i in range(len(dims) - 2):
             layers.append(nn.Linear(dims[i], dims[i + 1]))
-            layers.append(nn.LayerNorm(dims[i + 1]))
             layers.append(nn.GELU())
         layers.append(nn.Linear(dims[-2], dims[-1]))
         self.net = nn.Sequential(*layers)

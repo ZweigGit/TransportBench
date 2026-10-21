@@ -104,7 +104,7 @@ def main():
         model = Residual_Fusion_DeepONet(branch_dim=2, trunk_dim=2, hidden_dim=278, num_outputs=4,
                                          depth=5, activation='GELU')
     elif args.model == 'wavelet_deeponet':
-        # 991,748 real dof (~1.00M budget); complex trunk params count as 2
+        # 989,188 real dof (~0.99M budget, LN-free branch); complex trunk params count as 2
         model = WaveletDeepONet(branch_dim=2, trunk_dim=2, branch_hidden=256,
                                 trunk_hidden=256, branch_depth=5, trunk_depth=5,
                                 basis_size=128, w0=3.0, s0=3.0)
