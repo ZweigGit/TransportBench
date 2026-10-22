@@ -22,11 +22,9 @@ class DenseNet(nn.Module):
         super().__init__()
         layers =[]
         layers.append(nn.Linear(input_dim, hidden_width))
-        layers.append(nn.LayerNorm(hidden_width))
         layers.append(nn.GELU())
         for _ in range(hidden_depth - 1):
             layers.append(nn.Linear(hidden_width, hidden_width))
-            layers.append(nn.LayerNorm(hidden_width)) 
             layers.append(nn.GELU())
         layers.append(nn.Linear(hidden_width, output_dim))
         self.net = nn.Sequential(*layers)

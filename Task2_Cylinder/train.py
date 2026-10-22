@@ -29,7 +29,7 @@ def get_args():
                         choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet'],
                         help='Choose the baseline model')
     parser.add_argument('--epochs', type=int, default=2500, help='Number of training epochs')
-    parser.add_argument('--batch_size', type=int, default=16, help='Batch size')
+    parser.add_argument('--batch_size', type=int, default=48, help='Batch size')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
     parser.add_argument('--data_path', type=str, default='./data/cylinder_full_2400.pt', help='Path to dataset')
     parser.add_argument('--save_dir', type=str, default='./checkpoints', help='Directory to save models')

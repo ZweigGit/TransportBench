@@ -44,9 +44,9 @@ def get_args():
     parser = argparse.ArgumentParser(description="Universal Golden Protocol Training Script")
     parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet'])
     parser.add_argument('--data_path', type=str, default='../data/double_cone_dataset_with_physics.pt')
-    parser.add_argument('--batch_size', type=int, default=8)
+    parser.add_argument('--batch_size', type=int, default=9)
     parser.add_argument('--epochs', type=int, default=2500)
-    parser.add_argument('--lr', type=float, default=1e-4)
+    parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--no_fourier', action='store_true', help='Disable Fourier Encoding')
     parser.add_argument('--save_dir', type=str, default='./checkpoints')
     parser.add_argument('--seed', type=int, default=42)
@@ -62,7 +62,7 @@ def build_model(model_name, use_fourier):
     # Coordinate-based (branch = Mach/Temp/Re, trunk = x/y grid coords)
     elif model_name == 'hyperdeeponet': return HyperDeepONet(branch_hidden=45, trunk_hidden=64, trunk_depth=4, branch_depth=4, basis_size=128, use_fourier=use_fourier)
     # Single-trunk ablation of the multi-scale trunk (no scale branches, no
-    # frequency scaling): branch [3,313x5,512], trunk [2,313x5,128], 995,667 params
+    # frequency scaling, LN-free): branch [3,313x5,512], trunk [2,313x5,128], 989,407 params
     elif model_name == 'mscale_deeponet': return MscaleDeepONet(branch_dim=3, trunk_dim=2, hidden=313, num_outputs=4, depth=5, basis_size=128)
     elif model_name == 'hyper_mscale_deeponet': return HyperMscaleDeepONet(hidden_dim=55, depth=4, trunk_hidden=32, trunk_depth=4, basis_size=128)
     # Chunked hypernetwork: same generated trunk as HyperDeepONet (t_para=264,964) but emitted
