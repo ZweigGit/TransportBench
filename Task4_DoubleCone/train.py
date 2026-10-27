@@ -62,9 +62,12 @@ def build_model(model_name, use_fourier):
     # Coordinate-based (branch = Mach/Temp/Re, trunk = x/y grid coords)
     elif model_name == 'hyperdeeponet': return HyperDeepONet(branch_hidden=45, trunk_hidden=64, trunk_depth=4, branch_depth=4, basis_size=128, use_fourier=use_fourier)
     # Single-trunk ablation of the multi-scale trunk (no scale branches, no
-    # frequency scaling, LN-free): branch [3,313x5,512], trunk [2,313x5,128], 989,407 params
-    elif model_name == 'mscale_deeponet': return MscaleDeepONet(branch_dim=3, trunk_dim=2, hidden=313, num_outputs=4, depth=5, basis_size=128)
-    elif model_name == 'hyper_mscale_deeponet': return HyperMscaleDeepONet(hidden_dim=55, depth=4, trunk_hidden=32, trunk_depth=4, basis_size=128)
+    # frequency scaling, LN-free) with Phi trunk activation and fusion-style
+    # learnable per-layer modulation act(10*a*z + c): branch [3,313x5,512] GELU,
+    # trunk [2,313x5,128] Phi, 1,006,478 params
+    elif model_name == 'mscale_deeponet': return MscaleDeepONet(branch_dim=3, trunk_dim=2, hidden=316, num_outputs=4, depth=5, basis_size=128)
+    elif model_name == 'hyper_mscale_deeponet': return HyperMscaleDeepONet(branch_dim=3, trunk_dim=2, hidden_dim=68,
+                                                                           num_outputs=4, depth=4, activation='GELU')
     # Chunked hypernetwork: same generated trunk as HyperDeepONet (t_para=264,964) but emitted
     # in 512-wide chunks from a small branch (0.85M vs 34.2M)
     elif model_name == 'c_hyperdeeponet': return c_HyperDeepONet(trunk_hidden_dim=256, branch_hidden_dim=350, num_basis=256,
@@ -90,8 +93,8 @@ def build_model(model_name, use_fourier):
     # Multi-branch Gabor trunk (Julia MwaveletNN): scales live in the
     # per-branch (w0, s0) = (1,1),(2,2),(3,3),(4,4) activation, ~1.0M real dof
     elif model_name == 'mwavelet_deeponet': return MwaveletDeepONet(branch_dim=3, trunk_dim=2, branch_hidden=256,
-                                                                    trunk_hidden=160, branch_depth=4, trunk_depth=4,
-                                                                    basis_size=128)
+                                                                    trunk_hidden=230, branch_depth=4, trunk_depth=4,
+                                                                    basis_size=128, s0=1.0, w0s=[0.0, 5.0, 10.0, 15.0])
     # Residual-fusion branch + complex Gabor trunk, both width 259 (elementwise
     # gate forces equal widths; complex = 2 dof) — ~1.01M real dof budget
     elif model_name == 'residual_fusion_wavelet_deeponet': return Residual_Fusion_Wavelet_DeepONet(branch_dim=3, trunk_dim=2,

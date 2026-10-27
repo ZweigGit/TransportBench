@@ -2,6 +2,15 @@ import torch
 import torch.nn as nn
 
 
+class PhiActivation(nn.Module):
+    """B-spline of order 3, compact support on [0, 3] (Liu et al. 2020)."""
+    def forward(self, x):
+        return (torch.relu(x) ** 2
+                - 3 * torch.relu(x - 1) ** 2
+                + 3 * torch.relu(x - 2) ** 2
+                - torch.relu(x - 3) ** 2)
+
+
 class _FNN(nn.Module):
     """Fully-connected net: Linear -> Act -> ... -> Linear."""
     def __init__(self, dims, act):
@@ -19,8 +28,9 @@ class _FNN(nn.Module):
 
 class MscaleDeepONet(nn.Module):
     """DeepONet with a plain single FNN trunk — the multi-scale trunk (parallel
-    frequency-scaled sub-networks) is replaced by one standard trunk; the branch
-    net and the basis dot product are unchanged (same ~1M budget ablation).
+    frequency-scaled sub-networks) is replaced by one standard trunk with Phi
+    (B-spline) activation; the branch net and the basis dot product are
+    unchanged (same ~1M budget ablation).
 
     Args:
         branch_dim:    Input dimension of the branch net (flow params).
@@ -41,7 +51,9 @@ class MscaleDeepONet(nn.Module):
         else:
             raise ValueError(f"Unsupported activation: {activation}")
 
-        self.trunk_net = _FNN([trunk_dim] + [hidden] * depth + [basis_size], act)
+        # Trunk always uses Phi (B-spline) activation; branch follows `activation`
+        self.trunk_net = _FNN([trunk_dim] + [hidden] * depth + [basis_size],
+                              PhiActivation())
         self.branch_net = _FNN([branch_dim] + [hidden] * depth + [num_outputs * basis_size], act)
         self.num_outputs = num_outputs
         self.basis_size = basis_size

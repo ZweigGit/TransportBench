@@ -1,36 +1,83 @@
 import torch
 import torch.nn as nn
 
-from model_wavelet_deeponet import _FNN, _GaborTrunk
+# Multi-branch trunk in the layout of the original MscaleDeepONet (parallel
+# sub-trunks whose outputs are concatenated), but each sub-trunk is a real FNN
+# whose hidden activation is the real Gabor wavelet
+# psi(x) = exp(-(s0*x)^2) * cos(w0*x). All branches share one s0; branch i
+# uses w0_i = i * w0 (distinct per branch), so the multi-scale structure lives
+# in the per-branch activation constants instead of an input scaling layer.
 
-# Ported from Multi-Resolution-WNN experiments/18_gabor_fnn_f1.jl (MwaveletNN):
-# multi-branch Gabor trunk WITHOUT an input scaling layer — the scales live in
-# the per-branch Gabor activation (w0, s0). Same layout as MscaleDeepONet, but
-# each trunk sub-network is a complex Gabor FNN whose real-part output is
-# concatenated with its siblings into the trunk feature vector.
+
+class RealGaborActivation(nn.Module):
+    """Real Gabor wavelet psi(x) = exp(-(s0*x)^2) * cos(w0*x).
+    w0/s0 are fixed hyperparameters passed at construction, not learned."""
+    def __init__(self, w0=3.0, s0=3.0):
+        super().__init__()
+        self.w0 = float(w0)
+        self.s0 = float(s0)
+
+    def forward(self, x):
+        # Bounded in [-1, 1]: no overflow/clamp needed; large |s0| just
+        # underflows env (and its gradient) to 0.
+        env = torch.exp((self.s0 * x) ** 2 * -1.0)
+        return env * torch.cos(self.w0 * x)
+
+
+class _GaborTrunk(nn.Module):
+    """Real FNN trunk: Linear -> RealGabor -> ... -> Linear (shared activation
+    module so all layers update the same w0/s0 pair)."""
+    def __init__(self, trunk_dim, hidden_dim, depth, out_dim, w0, s0):
+        super().__init__()
+        act = RealGaborActivation(w0, s0)
+        dims = [trunk_dim] + [hidden_dim] * depth + [out_dim]
+        layers = []
+        for i in range(len(dims) - 2):
+            layers.append(nn.Linear(dims[i], dims[i + 1]))
+            layers.append(act)
+        layers.append(nn.Linear(dims[-2], dims[-1]))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.net(x)
+
+
+class _FNN(nn.Module):
+    """Real FNN: Linear -> GELU -> ... -> Linear (branch)."""
+    def __init__(self, dims):
+        super().__init__()
+        layers = []
+        for i in range(len(dims) - 2):
+            layers.append(nn.Linear(dims[i], dims[i + 1]))
+            layers.append(nn.GELU())
+        layers.append(nn.Linear(dims[-2], dims[-1]))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.net(x)
 
 
 class _MwaveletTrunk(nn.Module):
-    """Parallel complex Gabor FNN sub-trunks, one per (w0, s0) pair. Each
-    returns the real part of its complex output; outputs are concatenated,
-    so trunk feature dim = n_wavelets * out_dim."""
-    def __init__(self, trunk_dim, hidden_dim, depth, out_dim, wavelets):
+    """Parallel real Gabor FNN sub-trunks, one per (w0_i, s0) pair. Each
+    returns a real feature vector; outputs are concatenated, so trunk feature
+    dim = n_branches * out_dim."""
+    def __init__(self, trunk_dim, hidden_dim, depth, out_dim, w0s, s0):
         super().__init__()
         self.branches = nn.ModuleList([
-            _GaborTrunk(trunk_dim, hidden_dim, depth, out_dim, w0, s0)
-            for w0, s0 in wavelets
+            _GaborTrunk(trunk_dim, hidden_dim, depth, out_dim, w0_i, s0)
+            for w0_i in w0s
         ])
-        self.out_dim = len(wavelets) * out_dim
+        self.out_dim = len(w0s) * out_dim
 
     def forward(self, x):
         return torch.cat([branch(x) for branch in self.branches], dim=-1)
 
 
 class MwaveletDeepONet(nn.Module):
-    """DeepONet with a multi-branch Gabor-wavelet trunk: branch i's atoms are
-    psi(z; w0_i, s0_i) = exp(i*w0_i*z) * exp(-|s0_i*z|^2), so the multi-scale
-    structure lives in the activation constants instead of an input scaling
-    layer. Trunk feature vector = concatenation of the (equal-width) real-part
+    """DeepONet with a multi-branch real-Gabor trunk: branch i's hidden
+    activation is psi(z; w0_i, s0) = exp(-(s*z)^2) * cos(w0_i*z) applied at
+    every layer, with s0 shared across branches and w0_i = i * w0 distinct
+    per branch. Trunk feature vector = concatenation of the (equal-width)
     sub-network outputs.
 
     Args:
@@ -38,27 +85,30 @@ class MwaveletDeepONet(nn.Module):
         trunk_dim:    Input dimension of the trunk net (coordinates).
         branch_hidden / branch_depth: Branch net width / hidden layers.
         trunk_hidden / trunk_depth:   Width / hidden layers of each sub-trunk.
-        basis_size:   Total trunk feature dim (= n_wavelets * per-branch out
-                      width); must be divisible by len(wavelets).
+        basis_size:   Total trunk feature dim (= n_branches * per-branch out
+                      width); must be divisible by n_branches.
         num_outputs:  Output channels.
-        wavelets:     Per-branch (w0, s0) Gabor constants (fixed, not trained).
+        w0s:          Per-branch Gabor frequencies w0_i (fixed, not learned);
+                      default [1.0, 2.0, ..., n_branches].
+        s0:           Gabor dilation hyperparameter shared by all branches
+                      (fixed, not learned).
     """
     def __init__(self, branch_dim=3, trunk_dim=2, branch_hidden=256,
                  trunk_hidden=160, branch_depth=4, trunk_depth=4,
-                 basis_size=128, num_outputs=4,
-                 wavelets=None):
+                 basis_size=128, num_outputs=4, w0s=None, s0=1.0):
         super().__init__()
-        if wavelets is None:
-            wavelets = [(1.0, 1.0), (2.0, 2.0), (3.0, 3.0), (4.0, 4.0)]
-        if basis_size % len(wavelets) != 0:
+        if w0s is None:
+            w0s = [(i + 1) * 1.0 for i in range(4)]
+        n_branches = len(w0s)
+        if basis_size % n_branches != 0:
             raise ValueError(
                 f"basis_size {basis_size} must be divisible by "
-                f"n_wavelets {len(wavelets)}"
+                f"n_branches {n_branches}"
             )
-        out_dim = basis_size // len(wavelets)
+        out_dim = basis_size // n_branches
 
         self.trunk_net = _MwaveletTrunk(trunk_dim, trunk_hidden, trunk_depth,
-                                        out_dim, wavelets)
+                                        out_dim, w0s, s0)
         self.trunk_feat_dim = self.trunk_net.out_dim
 
         branch_dims = ([branch_dim] + [branch_hidden] * branch_depth
