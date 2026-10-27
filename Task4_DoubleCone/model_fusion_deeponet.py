@@ -71,6 +71,13 @@ class Fusion_DeepONet(nn.Module):
             self.trunk_net.append(nn.Linear(hidden_dim, hidden_dim))
         self.trunk_net.append(nn.Linear(hidden_dim, hidden_dim))
 
+        # Per-hidden-layer LayerNorm on the linear pre-activation z, matching
+        # the Linear -> LN -> Act layout of the other MLP-family DeepONets
+        self.ln_b = nn.ModuleList(
+            [nn.LayerNorm(hidden_dim) for _ in range(self.L - 1)])
+        self.ln_t = nn.ModuleList(
+            [nn.LayerNorm(hidden_dim) for _ in range(self.L - 1)])
+
         self.num_outputs = num_outputs
         self.hidden_dim = hidden_dim
 
@@ -92,7 +99,7 @@ class Fusion_DeepONet(nn.Module):
         skip = []
 
         for i in range(self.L - 1):
-            z_b = self.branch_net[i](x_branch)
+            z_b = self.ln_b[i](self.branch_net[i](x_branch))
             x_branch = self.act(10 * self.ab[i] * z_b + self.cb[i]) + \
                 10 * self.a1b[i] * self.act2(10 * self.F1b[i] * z_b + self.c1b[i])
             skip.append(x_branch)
@@ -102,7 +109,7 @@ class Fusion_DeepONet(nn.Module):
             skip[i] = skip[i - 1] + skip[i]
 
         for i in range(self.L - 1):
-            z_t = self.trunk_net[i](x_trunk)
+            z_t = self.ln_t[i](self.trunk_net[i](x_trunk))
             x_trunk = self.act(10 * self.at[i] * z_t + self.ct[i]) + \
                 10 * self.a1t[i] * self.act2(10 * self.F1t[i] * z_t + self.c1t[i])
 

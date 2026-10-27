@@ -42,15 +42,29 @@ class ComplexLinear(nn.Module):
         return F.linear(x, self.weight, self.bias)
 
 
+class _ComplexLN(nn.Module):
+    """LayerNorm on complex features: concat real/imag into a 2*dim real
+    vector, standard LN with joint statistics and per-part affine."""
+    def __init__(self, dim):
+        super().__init__()
+        self.ln = nn.LayerNorm(2 * dim)
+
+    def forward(self, z):
+        z2 = torch.view_as_real(z).flatten(-2)              # [..., 2*dim]
+        z2 = self.ln(z2)
+        return torch.view_as_complex(z2.unflatten(-1, (-1, 2)))
+
+
 class _GaborTrunk(nn.Module):
-    """Complex FNN trunk: ComplexLinear -> Gabor -> ... -> ComplexLinear,
-    real part of the complex output is the trunk feature vector."""
+    """Complex FNN trunk: ComplexLinear -> ComplexLN -> Gabor -> ... ->
+    ComplexLinear, real part of the complex output is the trunk feature vector."""
     def __init__(self, trunk_dim, hidden_dim, depth, out_dim, w0, s0):
         super().__init__()
         dims = [trunk_dim] + [hidden_dim] * depth + [out_dim]
         layers = []
         for i in range(len(dims) - 2):
             layers.append(ComplexLinear(dims[i], dims[i + 1]))
+            layers.append(_ComplexLN(dims[i + 1]))
             layers.append(GaborActivation(w0, s0))
         layers.append(ComplexLinear(dims[-2], dims[-1]))
         self.net = nn.Sequential(*layers)
@@ -60,12 +74,13 @@ class _GaborTrunk(nn.Module):
 
 
 class _FNN(nn.Module):
-    """Real FNN: Linear -> GELU -> ... -> Linear (branch)."""
+    """Real FNN: Linear -> LN -> GELU -> ... -> Linear (branch, like MscaleDeepONet)."""
     def __init__(self, dims):
         super().__init__()
         layers = []
         for i in range(len(dims) - 2):
             layers.append(nn.Linear(dims[i], dims[i + 1]))
+            layers.append(nn.LayerNorm(dims[i + 1]))
             layers.append(nn.GELU())
         layers.append(nn.Linear(dims[-2], dims[-1]))
         self.net = nn.Sequential(*layers)
