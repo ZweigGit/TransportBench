@@ -63,7 +63,36 @@ def vacuum_mask(y_data):
     return (y_data[:, 3] == 0).all(dim=0)
 
 
-def get_dataloader_and_stats(data_path, batch_size, device):
+def consolidate_duplicates(params, y_train):
+    """Replace labels of exact-duplicate param rows by their group mean.
+
+    18 of 51 samples share identical (Ma, Tw, Re) with different fields (the
+    freestream state is not pinned by the exposed params), so the MSE-optimal
+    target E[y|theta] is best estimated by the duplicate-group mean. Operates
+    in-place on y_train (p already log10); stats keep using the raw labels.
+    """
+    n = params.shape[0]
+    d = torch.cdist(params, params)
+    parent = list(range(n))
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+    for i in range(n):
+        for j in range(i + 1, n):
+            if d[i, j] < 1e-6:
+                parent[find(i)] = find(j)
+    groups = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+    for g in groups.values():
+        if len(g) > 1:
+            y_train[g] = y_train[g].mean(0, keepdim=True)
+    return y_train
+
+
+def get_dataloader_and_stats(data_path, batch_size, device, consolidate=False):
     """
     Load dataset and compute normalization statistics
     Returns: train_loader, test_loader, x_norm, y_norm
@@ -91,7 +120,10 @@ def get_dataloader_and_stats(data_path, batch_size, device):
     y_min = torch.amin(y_train_raw, dim=(0, 2, 3), keepdim=True)
     y_max = torch.amax(y_train_raw, dim=(0, 2, 3), keepdim=True)
 
-    x_train, y_train = x_data[train_idx].to(device), y_data[train_idx].to(device)
+    y_train_c = y_data[train_idx].clone()
+    if consolidate:
+        consolidate_duplicates(x_data[train_idx, 2:5, 0, 0], y_train_c)
+    x_train, y_train = x_data[train_idx].to(device), y_train_c.to(device)
     x_test, y_test = x_data[test_idx].to(device), y_data[test_idx].to(device)
 
     train_loader = DataLoader(TensorDataset(x_train, y_train), batch_size=batch_size, shuffle=True)

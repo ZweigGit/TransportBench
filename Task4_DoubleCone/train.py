@@ -6,7 +6,7 @@ import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from data_loader import get_dataloader_and_stats, vacuum_mask
+from data_loader import get_dataloader_and_stats, vacuum_mask, get_split_indices
 
 from model_ae import AutoEncoder2d
 from model_deeponet import DeepONet2d
@@ -25,6 +25,7 @@ from model_mr_deeponet import MR_DeepONet
 from model_mwavelet_deeponet import MwaveletDeepONet
 from model_wavelet_deeponet import WaveletDeepONet
 from model_residual_fusion_wavelet_deeponet import Residual_Fusion_Wavelet_DeepONet
+from model_fs_deeponet import FS_DeepONet
 
 class GridAdapter(nn.Module):
     """Grid [B,5,H,W] interface for (branch, trunk) coordinate DeepONet variants:
@@ -40,9 +41,16 @@ class GridAdapter(nn.Module):
         out = self.m(x[:, 2:5, 0, 0], trunk)          # [B, H*W, C]
         return out.permute(0, 2, 1).reshape(B, -1, H, W)
 
+    @property
+    def aux_loss(self):
+        return self.m.aux_loss
+
+    def graph_lap_loss(self):
+        return self.m.graph_lap_loss()
+
 def get_args():
     parser = argparse.ArgumentParser(description="Universal Golden Protocol Training Script")
-    parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet'])
+    parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'fs_deeponet', 'fs_lap_deeponet'])
     parser.add_argument('--data_path', type=str, default='../data/double_cone_dataset_with_physics.pt')
     parser.add_argument('--batch_size', type=int, default=9)
     parser.add_argument('--epochs', type=int, default=2500)
@@ -50,9 +58,46 @@ def get_args():
     parser.add_argument('--no_fourier', action='store_true', help='Disable Fourier Encoding')
     parser.add_argument('--save_dir', type=str, default='./checkpoints')
     parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--consolidate', action='store_true',
+                        help='Replace duplicate-param train labels by group mean')
     return parser.parse_args()
 
-def build_model(model_name, use_fourier):
+def build_fs_ctx(y_raw, param_raw, train_idx, x_norm, y_norm):
+    """Stats for FS_DeepONet, computed on the train split only (no leakage).
+
+    y_raw: [S,4,H,W] physical targets with p NOT yet log10-transformed.
+    param_raw: [S,3] raw branch params (dataset order).
+    """
+    fluid = y_raw[train_idx, 3] > 0
+    blk = y_raw[:, :, :, 0:5]
+    m_in = y_raw[:, 3, None, :, 0:5] > 0
+    min3 = m_in[:, 0]                                     # [S, H, 5]
+    fs = torch.stack([(blk[:, 0] * min3).sum((1, 2)) / min3.sum((1, 2)),
+                      (blk[:, 1] * min3).sum((1, 2)) / min3.sum((1, 2)),
+                      (blk[:, 3] * min3).sum((1, 2)) / min3.sum((1, 2))], dim=1)
+    ylog = y_raw.clone()
+    ylog[:, 3] = torch.log10(y_raw[:, 3] + 1e-6)
+    ytr, fstr = ylog[train_idx], fs[train_idx]
+    ftr = fluid
+    lrho = torch.log10((ytr[:, 0] / fstr[:, 0, None, None]).clamp_min(1e-8))[ftr]
+    u_nd = (ytr[:, 1] / fstr[:, 1, None, None])[ftr]
+    v_nd = (ytr[:, 2] / fstr[:, 1, None, None])[ftr]
+    lp = (ytr[:, 3] - torch.log10(fstr[:, 2])[:, None, None])[ftr]
+    t = torch.stack([lrho, u_nd, v_nd, lp])
+    # benchmark y stats from the shared normalizer (log-p space)
+    ymin = y_norm.min.view(-1).cpu()
+    yrange = (y_norm.max - y_norm.min).view(-1).cpu()
+    # normalized param table for exact row matching at train time
+    pmin = x_norm.min.view(-1)[2:5].cpu()
+    pmax = x_norm.max.view(-1)[2:5].cpu()
+    ptab = (param_raw - pmin) / (pmax - pmin + 1e-6)
+    lg = torch.log10(fs)
+    mu, sd = lg.mean(0), lg.std(0)
+    return {'param_table': ptab, 'log_fs_z': (lg - mu) / sd, 'fs_mu': mu, 'fs_sd': sd,
+            'tmin': t.amin(1), 'tmax': t.amax(1), 'ymin': ymin, 'yrange': yrange}
+
+
+def build_model(model_name, use_fourier, ctx=None):
     if model_name == 'ae': return AutoEncoder2d(in_channels=5, out_channels=4, features=128, use_fourier=use_fourier)
     elif model_name == 'deeponet': return DeepONet2d(in_channels=5, out_channels=4,hidden_width=316, basis_size=128, use_fourier=use_fourier)
     elif model_name == 'fno': return FNO2d(modes1=8, modes2=64, width=64, in_channels=5, out_channels=4, use_fourier=use_fourier)
@@ -101,6 +146,11 @@ def build_model(model_name, use_fourier):
                                                                                                     hidden_dim=259, trunk_hidden=259,
                                                                                                     num_outputs=4, depth=5,
                                                                                                     basis_size=128, w0=3.0, s0=3.0)
+    # Freestream-normalized DeepONet (lap=True adds the train-param kNN
+    # Laplacian penalty on branch coefficients), ~1.0M params
+    elif model_name in ('fs_deeponet', 'fs_lap_deeponet'):
+        return FS_DeepONet(hidden=300, depth=5, basis_size=128, ctx=ctx,
+                           lap=model_name == 'fs_lap_deeponet')
 
 def main():
     args = get_args()
@@ -113,13 +163,13 @@ def main():
     use_fourier = not args.no_fourier
     # Coordinate-based DeepONet variants, wrapped behind the grid image interface
     # so they train with the same curriculum-weighted MSE as grid models
-    coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet'}
+    coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'fs_deeponet', 'fs_lap_deeponet'}
     # Coord variants without a Fourier option get no suffix (only hyperdeeponet supports it)
     fourierless = coord_models - {'hyperdeeponet'}
     fourier_suffix = "" if args.model in fourierless else ("_fourier" if use_fourier else "_nofourier")
 
     # Per-model output subdirectory, aligned with Task I convention
-    args.save_dir = os.path.join('output', args.model + fourier_suffix)
+    args.save_dir = os.path.join('output', args.model + fourier_suffix + ('_cons' if args.consolidate else ''))
     os.makedirs(args.save_dir, exist_ok=True)
     save_path = os.path.join(args.save_dir, 'best_model.pth')
     log_file = os.path.join(args.save_dir, 'train.log')
@@ -132,10 +182,17 @@ def main():
     log(f"=== Training {args.model.upper()} | Fourier: {use_fourier} | Device: {device} ===")
     log("Strategy: TIME-DILATED GOLDEN PROTOCOL (Peak LR @ 40%, Weights start @ Ep800)")
 
-    train_loader, test_loader, x_norm, y_norm, vac = get_dataloader_and_stats(args.data_path, args.batch_size, device)
+    train_loader, test_loader, x_norm, y_norm, vac = get_dataloader_and_stats(
+        args.data_path, args.batch_size, device, consolidate=args.consolidate)
     vac = vac.to(device)
 
-    model = build_model(args.model, use_fourier).to(device)
+    ctx = None
+    if args.model in ('fs_deeponet', 'fs_lap_deeponet'):
+        data_raw = torch.load(args.data_path, weights_only=False)
+        train_idx, _ = get_split_indices(data_raw['x'].shape[0])
+        ctx = build_fs_ctx(data_raw['y'].float(), data_raw['x'][:, 2:5, 0, 0].float(),
+                           train_idx, x_norm, y_norm)
+    model = build_model(args.model, use_fourier, ctx).to(device)
     if args.model in coord_models:
         model = GridAdapter(model).to(device)
     # Complex params count as 2 real dof (wavelet_deeponet trunk)
@@ -185,6 +242,11 @@ def main():
             w[:, :, vac] = 0.0          # Vacuum filler cells are not targets
 
             loss = (raw_loss * w).sum() / w.sum()
+            if getattr(model, 'aux_loss', None) is not None:
+                loss = loss + model.aux_loss
+            inner = getattr(model, 'm', model)
+            if getattr(inner, 'lap', False):
+                loss = loss + inner.lap_weight * inner.graph_lap_loss()
             loss.backward()
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
