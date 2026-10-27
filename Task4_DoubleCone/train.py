@@ -169,7 +169,10 @@ def main():
     fourier_suffix = "" if args.model in fourierless else ("_fourier" if use_fourier else "_nofourier")
 
     # Per-model output subdirectory, aligned with Task I convention
-    args.save_dir = os.path.join('output', args.model + fourier_suffix + ('_cons' if args.consolidate else ''))
+    # (T4_SAVE_DIR lets external harnesses like cv_eval.py redirect outputs)
+    args.save_dir = os.environ.get(
+        'T4_SAVE_DIR',
+        os.path.join('output', args.model + fourier_suffix + ('_cons' if args.consolidate else '')))
     os.makedirs(args.save_dir, exist_ok=True)
     save_path = os.path.join(args.save_dir, 'best_model.pth')
     log_file = os.path.join(args.save_dir, 'train.log')
