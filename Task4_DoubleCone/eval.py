@@ -14,7 +14,7 @@ def get_args():
                         help='Choose the model to evaluate')
     parser.add_argument('--no_fourier', action='store_true',
                         help='Model does not use Fourier encoding')
-    parser.add_argument('--data_path', type=str, default='../data/double_cone_dataset_with_physics.pt',
+    parser.add_argument('--data_path', type=str, default='../data/double_cone_dataset_repaired.pt',
                         help='Path to dataset')
     parser.add_argument('--checkpoint', type=str, default=None,
                         help='Path to checkpoint (default: output/<model><_fourier|_nofourier>/best_model.pth)')

@@ -51,7 +51,7 @@ class GridAdapter(nn.Module):
 def get_args():
     parser = argparse.ArgumentParser(description="Universal Golden Protocol Training Script")
     parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'fs_deeponet', 'fs_lap_deeponet'])
-    parser.add_argument('--data_path', type=str, default='../data/double_cone_dataset_with_physics.pt')
+    parser.add_argument('--data_path', type=str, default='../data/double_cone_dataset_repaired.pt')
     parser.add_argument('--batch_size', type=int, default=9)
     parser.add_argument('--epochs', type=int, default=2500)
     parser.add_argument('--lr', type=float, default=1e-3)
