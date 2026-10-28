@@ -22,12 +22,13 @@ from model_fusion_deeponet import Fusion_DeepONet
 from model_residual_fusion_deeponet import Residual_Fusion_DeepONet
 from model_wavelet_deeponet import WaveletDeepONet
 from model_residual_fusion_wavelet_deeponet import Residual_Fusion_Wavelet_DeepONet
+from model_mwavelet_deeponet import MwaveletDeepONet
 from data_loader import AirfoilDataset
 
 def get_args():
     parser = argparse.ArgumentParser(description="Evaluation Script for Task I: Airfoil Flow")
     parser.add_argument('--model', type=str, required=True,
-                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'hyper_wavelet_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet', 'residual_fusion_wavelet_deeponet'],
+                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'hyper_wavelet_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'mwavelet_deeponet'],
                         help='Choose the baseline model to evaluate')
     parser.add_argument('--data_path', type=str, default='data/airfoil_unified_128x128.pt', help='Path to dataset')
     parser.add_argument('--checkpoint', type=str, default=None, help='Path to weights (default: output/<model>/best_model.pth)')
@@ -107,6 +108,12 @@ def main():
                                                  hidden_dim=235, trunk_hidden=235,
                                                  num_outputs=4, depth=5,
                                                  basis_size=128, w0=3.0, s0=3.0)
+    elif args.model == 'mwavelet_deeponet':
+        # 1,002,436 real dof (~1.00M budget); multi-branch real-Gabor trunk
+        # (w0s=[0,5,10,15], s0=1.0 shared), branch 256/4 as in Task4 port
+        model = MwaveletDeepONet(branch_dim=674, trunk_dim=2, branch_hidden=256,
+                                 trunk_hidden=198, branch_depth=4, trunk_depth=4,
+                                 basis_size=128, s0=1.0, w0s=[0.0, 5.0, 10.0, 15.0])
 
     model = model.to(device)
     
