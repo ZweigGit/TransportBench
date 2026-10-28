@@ -61,7 +61,7 @@ def streamwise_spectrum(field, valid):
 
 def main():
     parser = argparse.ArgumentParser(description='Spectral comparison on one test sample')
-    parser.add_argument('--data_path', type=str, default='../data/double_cone_dataset_with_physics.pt')
+    parser.add_argument('--data_path', type=str, default='../data/double_cone_dataset.pt')
     parser.add_argument('--test_sample_idx', type=int, default=0, help='Index into the TEST set')
     args = parser.parse_args()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

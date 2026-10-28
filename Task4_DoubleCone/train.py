@@ -52,7 +52,7 @@ class GridAdapter(nn.Module):
 def get_args():
     parser = argparse.ArgumentParser(description="Universal Golden Protocol Training Script")
     parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'fusion_wavelet_deeponet', 'fs_deeponet', 'fs_lap_deeponet'])
-    parser.add_argument('--data_path', type=str, default='../data/double_cone_dataset_repaired.pt')
+    parser.add_argument('--data_path', type=str, default='../data/double_cone_dataset.pt')
     parser.add_argument('--batch_size', type=int, default=9)
     parser.add_argument('--epochs', type=int, default=2500)
     parser.add_argument('--lr', type=float, default=1e-3)
@@ -201,8 +201,9 @@ def main():
     vac = vac.to(device)
 
     ctx = None
-    if args.model == 'deeponet' and '4param' in args.data_path:
-        ctx = {'branch_dim': 4}
+    if args.model == 'deeponet':
+        # branch dim follows the dataset's parameter channels (coords + N params)
+        ctx = {'branch_dim': train_loader.dataset.tensors[0].shape[1] - 2}
     if args.model in ('fs_deeponet', 'fs_lap_deeponet'):
         data_raw = torch.load(args.data_path, weights_only=False)
         train_idx, _ = get_split_indices(data_raw['x'].shape[0])
