@@ -27,3 +27,13 @@ Field-to-case confidence: 29 exact, 20 field-evidence (high), 2 low
 
 ## Result (same model & protocol)
 RL2E 0.147 (4-run mean, broken data) -> ~0.100 on any repaired version.
+
+## 4-param variant (experimental, NOT recommended as default)
+`data/double_cone_dataset_repaired_4param.pt` adds normalized T_wall as a 4th input
+channel (x = coords + Ma/Tv/Re/Twall). DeepONet auto-adapts (`branch_dim` in the
+ckpt config; pass a `4param` data path). Caveat: T_wall is only CERTAIN for 22/51
+fields (see `twall_confidence`); within 8 groups the labels are an unverified
+permutation (the wall-temperature signature is too weak in the 17x384 resampled
+fields to resolve). Empirically this hurts: RL2E 0.1145 vs 0.1015 (3-param v3,
+same seed/protocol) - the noisy 4th input costs more than the ~1-6% twall signal
+it carries. Use v3 unless T_wall labels are verified upstream.

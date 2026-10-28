@@ -35,14 +35,16 @@ class DenseNet(nn.Module):
         return self.net(x)
 
 class DeepONet2d(nn.Module):
-    def __init__(self, in_channels=5, out_channels=4, basis_size=256, hidden_width=2048, use_fourier=False):
+    def __init__(self, in_channels=5, out_channels=4, basis_size=256, hidden_width=2048, use_fourier=False,
+                 branch_dim=3):
         super().__init__()
         self.basis_size = basis_size
         self.out_channels = out_channels
         self.use_fourier = use_fourier
-        
+        self.branch_dim = branch_dim
+
         # Branch Net: Physical parameter inputs
-        self.branch_net = DenseNet(input_dim=3, output_dim=out_channels * basis_size,
+        self.branch_net = DenseNet(input_dim=branch_dim, output_dim=out_channels * basis_size,
                                    hidden_width=hidden_width, hidden_depth=5)
         
         # Trunk Net: Coordinate inputs
@@ -59,7 +61,7 @@ class DeepONet2d(nn.Module):
 
     def forward(self, x):
         B, C, H, W = x.shape
-        branch_in = x[:, 2:5, 0, 0] # [B, 3]
+        branch_in = x[:, 2:2 + self.branch_dim, 0, 0]  # [B, branch_dim]
         coords = x[0, 0:2, :, :].permute(1, 2, 0).reshape(-1, 2)
         
         if self.use_fourier:

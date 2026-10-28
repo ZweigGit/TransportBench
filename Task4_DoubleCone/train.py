@@ -100,7 +100,9 @@ def build_fs_ctx(y_raw, param_raw, train_idx, x_norm, y_norm):
 
 def build_model(model_name, use_fourier, ctx=None):
     if model_name == 'ae': return AutoEncoder2d(in_channels=5, out_channels=4, features=128, use_fourier=use_fourier)
-    elif model_name == 'deeponet': return DeepONet2d(in_channels=5, out_channels=4,hidden_width=316, basis_size=128, use_fourier=use_fourier)
+    elif model_name == 'deeponet':
+        return DeepONet2d(in_channels=5, out_channels=4, hidden_width=316, basis_size=128,
+                          use_fourier=use_fourier, branch_dim=(ctx or {}).get('branch_dim', 3))
     elif model_name == 'fno': return FNO2d(modes1=8, modes2=64, width=64, in_channels=5, out_channels=4, use_fourier=use_fourier)
     elif model_name == 'pt': return PointTransformer(in_channels=5, out_channels=4, latent_dim=512, num_latents=1024, depth=10, use_fourier=use_fourier)
     elif model_name == 'unet': return FluidUNet(in_channels=5, out_channels=4, features=64, use_fourier=use_fourier)
@@ -147,9 +149,10 @@ def build_model(model_name, use_fourier, ctx=None):
                                                                                                     hidden_dim=259, trunk_hidden=259,
                                                                                                     num_outputs=4, depth=5,
                                                                                                     basis_size=128, w0=3.0, s0=3.0)
-    # Fusion branch (GELU+sin modulation, multiplicative skip gate) + complex
-    # Gabor trunk, both width 259 (elementwise gate forces equal widths) —
-    # ~1.01M real dof budget, same dims as residual_fusion_wavelet_deeponet
+    # Fusion branch (ab/cb modulation, multiplicative skip gate, no sine
+    # term) + complex Gabor trunk, both width 259 (elementwise gate forces
+    # equal widths) — ~1.01M real dof budget, same dims as
+    # residual_fusion_wavelet_deeponet
     elif model_name == 'fusion_wavelet_deeponet': return Fusion_Wavelet_DeepONet(branch_dim=3, trunk_dim=2,
                                                                                  hidden_dim=259, trunk_hidden=259,
                                                                                  num_outputs=4, depth=5,
@@ -198,6 +201,8 @@ def main():
     vac = vac.to(device)
 
     ctx = None
+    if args.model == 'deeponet' and '4param' in args.data_path:
+        ctx = {'branch_dim': 4}
     if args.model in ('fs_deeponet', 'fs_lap_deeponet'):
         data_raw = torch.load(args.data_path, weights_only=False)
         train_idx, _ = get_split_indices(data_raw['x'].shape[0])
@@ -301,7 +306,8 @@ def main():
             
             torch.save({
                 'model_state': model.state_dict(),
-                'config': {'use_fourier': use_fourier},
+                'config': {'use_fourier': use_fourier,
+                           'branch_dim': (ctx or {}).get('branch_dim', 3)},
                 'epoch': ep,
                 'best_test_loss': best_test_loss
             }, save_path)
