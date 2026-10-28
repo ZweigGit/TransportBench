@@ -39,7 +39,7 @@ class GridAdapter(nn.Module):
     def forward(self, x):
         B, _, H, W = x.shape
         trunk = x[0, 0:2].permute(1, 2, 0).reshape(-1, 2)
-        out = self.m(x[:, 2:5, 0, 0], trunk)          # [B, H*W, C]
+        out = self.m(x[:, 2:, 0, 0], trunk)           # [B, H*W, C] (all param channels)
         return out.permute(0, 2, 1).reshape(B, -1, H, W)
 
     @property
@@ -89,8 +89,8 @@ def build_fs_ctx(y_raw, param_raw, train_idx, x_norm, y_norm):
     ymin = y_norm.min.view(-1).cpu()
     yrange = (y_norm.max - y_norm.min).view(-1).cpu()
     # normalized param table for exact row matching at train time
-    pmin = x_norm.min.view(-1)[2:5].cpu()
-    pmax = x_norm.max.view(-1)[2:5].cpu()
+    pmin = x_norm.min.view(-1)[2:].cpu()
+    pmax = x_norm.max.view(-1)[2:].cpu()
     ptab = (param_raw - pmin) / (pmax - pmin + 1e-6)
     lg = torch.log10(fs)
     mu, sd = lg.mean(0), lg.std(0)
@@ -99,53 +99,55 @@ def build_fs_ctx(y_raw, param_raw, train_idx, x_norm, y_norm):
 
 
 def build_model(model_name, use_fourier, ctx=None):
-    if model_name == 'ae': return AutoEncoder2d(in_channels=5, out_channels=4, features=128, use_fourier=use_fourier)
+    npar = (ctx or {}).get('n_param', 3)
+    inch = 2 + npar
+    if model_name == 'ae': return AutoEncoder2d(in_channels=inch, out_channels=4, features=128, use_fourier=use_fourier)
     elif model_name == 'deeponet':
-        return DeepONet2d(in_channels=5, out_channels=4, hidden_width=316, basis_size=128,
-                          use_fourier=use_fourier, branch_dim=(ctx or {}).get('branch_dim', 3))
-    elif model_name == 'fno': return FNO2d(modes1=8, modes2=64, width=64, in_channels=5, out_channels=4, use_fourier=use_fourier)
-    elif model_name == 'pt': return PointTransformer(in_channels=5, out_channels=4, latent_dim=512, num_latents=1024, depth=10, use_fourier=use_fourier)
-    elif model_name == 'unet': return FluidUNet(in_channels=5, out_channels=4, features=64, use_fourier=use_fourier)
-    elif model_name == 'vit': return VisionTransformer(in_channels=5, out_channels=4, embed_dim=512, depth=10, use_fourier=use_fourier)
+        return DeepONet2d(in_channels=inch, out_channels=4, hidden_width=316, basis_size=128,
+                          use_fourier=use_fourier, branch_dim=npar)
+    elif model_name == 'fno': return FNO2d(modes1=8, modes2=64, width=64, in_channels=inch, out_channels=4, use_fourier=use_fourier)
+    elif model_name == 'pt': return PointTransformer(in_channels=inch, out_channels=4, latent_dim=512, num_latents=1024, depth=10, use_fourier=use_fourier)
+    elif model_name == 'unet': return FluidUNet(in_channels=inch, out_channels=4, features=64, use_fourier=use_fourier)
+    elif model_name == 'vit': return VisionTransformer(in_channels=inch, out_channels=4, embed_dim=512, depth=10, use_fourier=use_fourier)
     # Coordinate-based (branch = Mach/Temp/Re, trunk = x/y grid coords)
-    elif model_name == 'hyperdeeponet': return HyperDeepONet(branch_hidden=45, trunk_hidden=64, trunk_depth=4, branch_depth=4, basis_size=128, use_fourier=use_fourier)
+    elif model_name == 'hyperdeeponet': return HyperDeepONet(branch_dim=npar, branch_hidden=45, trunk_hidden=64, trunk_depth=4, branch_depth=4, basis_size=128, use_fourier=use_fourier)
     # Single-trunk ablation of the multi-scale trunk (no scale branches, no
     # frequency scaling, LN-free) with Phi trunk activation and fusion-style
     # learnable per-layer modulation act(10*a*z + c): branch [3,313x5,512] GELU,
     # trunk [2,313x5,128] Phi, 1,006,478 params
-    elif model_name == 'mscale_deeponet': return MscaleDeepONet(branch_dim=3, trunk_dim=2, hidden=316, num_outputs=4, depth=5, basis_size=128)
-    elif model_name == 'hyper_mscale_deeponet': return HyperMscaleDeepONet(branch_dim=3, trunk_dim=2, hidden_dim=68,
+    elif model_name == 'mscale_deeponet': return MscaleDeepONet(branch_dim=npar, trunk_dim=2, hidden=316, num_outputs=4, depth=5, basis_size=128)
+    elif model_name == 'hyper_mscale_deeponet': return HyperMscaleDeepONet(branch_dim=npar, trunk_dim=2, hidden_dim=68,
                                                                            num_outputs=4, depth=4, activation='GELU')
     # Chunked hypernetwork: same generated trunk as HyperDeepONet (t_para=264,964) but emitted
     # in 512-wide chunks from a small branch (0.85M vs 34.2M)
-    elif model_name == 'c_hyperdeeponet': return c_HyperDeepONet(trunk_hidden_dim=256, branch_hidden_dim=350, num_basis=256,
+    elif model_name == 'c_hyperdeeponet': return c_HyperDeepONet(branch_dim=npar, trunk_hidden_dim=256, branch_hidden_dim=350, num_basis=256,
                                                                  trunk_depth=5, branch_depth=5, chunk_in=256, chunk_out=1024)
-    elif model_name == 'c_hyper_mscale_deeponet': return c_HyperMscaleDeepONet(hidden_dim=300, depth=5, trunk_hidden=256, trunk_depth=5,
+    elif model_name == 'c_hyper_mscale_deeponet': return c_HyperMscaleDeepONet(branch_dim=npar, hidden_dim=300, depth=5, trunk_hidden=256, trunk_depth=5,
                                                                               basis_size=256, chunk_in=256, chunk_out=1024)
     # 1,010,312 params (~1.01M budget), branch [3,278,...,278,1112], trunk [2,278,...,278,278]
-    elif model_name == 'fusion_deeponet': return Fusion_DeepONet(branch_dim=3, trunk_dim=2, hidden_dim=278, num_outputs=4,
+    elif model_name == 'fusion_deeponet': return Fusion_DeepONet(branch_dim=npar, trunk_dim=2, hidden_dim=278, num_outputs=4,
                                                                  depth=5, activation='GELU')
     # Same budget as fusion_deeponet; branch-to-trunk gate uses 1+skip (residual)
-    elif model_name == 'residual_fusion_deeponet': return Residual_Fusion_DeepONet(branch_dim=3, trunk_dim=2, hidden_dim=278, num_outputs=4,
+    elif model_name == 'residual_fusion_deeponet': return Residual_Fusion_DeepONet(branch_dim=npar, trunk_dim=2, hidden_dim=278, num_outputs=4,
                                                                                    depth=5, activation='GELU')
     # db4 multi-resolution dictionary trunk: 475 frozen atoms, zero trainable
     # trunk params (feature dim = atom count); full-rank branch head
-    elif model_name == 'mr_deeponet': return MR_DeepONet(branch_dim=3, trunk_dim=2, hidden_dim=350, num_outputs=4,
+    elif model_name == 'mr_deeponet': return MR_DeepONet(branch_dim=npar, trunk_dim=2, hidden_dim=350, num_outputs=4,
                                                          depth=4, levels=4, activation='GELU',
                                                          wavelet='db4', stride=2)
     # Gabor-wavelet trunk: complex FNN (one complex param = 2 real dof,
     # ~0.99M real dof), real part of trunk features into the dot product
-    elif model_name == 'wavelet_deeponet': return WaveletDeepONet(branch_dim=3, trunk_dim=2, branch_hidden=256,
+    elif model_name == 'wavelet_deeponet': return WaveletDeepONet(branch_dim=npar, trunk_dim=2, branch_hidden=256,
                                                                   trunk_hidden=256, branch_depth=5, trunk_depth=5,
                                                                   basis_size=128, s0=3.0, w0=3.0)
     # Multi-branch Gabor trunk (Julia MwaveletNN): scales live in the
     # per-branch (w0, s0) = (1,1),(2,2),(3,3),(4,4) activation, ~1.0M real dof
-    elif model_name == 'mwavelet_deeponet': return MwaveletDeepONet(branch_dim=3, trunk_dim=2, branch_hidden=256,
+    elif model_name == 'mwavelet_deeponet': return MwaveletDeepONet(branch_dim=npar, trunk_dim=2, branch_hidden=256,
                                                                     trunk_hidden=230, branch_depth=4, trunk_depth=4,
                                                                     basis_size=128, s0=1.0, w0s=[0.0, 5.0, 10.0, 15.0])
     # Residual-fusion branch + complex Gabor trunk, both width 259 (elementwise
     # gate forces equal widths; complex = 2 dof) — ~1.01M real dof budget
-    elif model_name == 'residual_fusion_wavelet_deeponet': return Residual_Fusion_Wavelet_DeepONet(branch_dim=3, trunk_dim=2,
+    elif model_name == 'residual_fusion_wavelet_deeponet': return Residual_Fusion_Wavelet_DeepONet(branch_dim=npar, trunk_dim=2,
                                                                                                     hidden_dim=259, trunk_hidden=259,
                                                                                                     num_outputs=4, depth=5,
                                                                                                     basis_size=128, w0=3.0, s0=3.0)
@@ -153,14 +155,14 @@ def build_model(model_name, use_fourier, ctx=None):
     # term) + complex Gabor trunk, both width 259 (elementwise gate forces
     # equal widths) — ~1.01M real dof budget, same dims as
     # residual_fusion_wavelet_deeponet
-    elif model_name == 'fusion_wavelet_deeponet': return Fusion_Wavelet_DeepONet(branch_dim=3, trunk_dim=2,
+    elif model_name == 'fusion_wavelet_deeponet': return Fusion_Wavelet_DeepONet(branch_dim=npar, trunk_dim=2,
                                                                                  hidden_dim=259, trunk_hidden=259,
                                                                                  num_outputs=4, depth=5,
                                                                                  basis_size=128, w0=3.0, s0=3.0)
     # Freestream-normalized DeepONet (lap=True adds the train-param kNN
     # Laplacian penalty on branch coefficients), ~1.0M params
     elif model_name in ('fs_deeponet', 'fs_lap_deeponet'):
-        return FS_DeepONet(hidden=300, depth=5, basis_size=128, ctx=ctx,
+        return FS_DeepONet(branch_dim=npar, hidden=300, depth=5, basis_size=128, ctx=ctx,
                            lap=model_name == 'fs_lap_deeponet')
 
 def main():
@@ -201,14 +203,14 @@ def main():
     vac = vac.to(device)
 
     ctx = None
-    if args.model == 'deeponet':
-        # branch dim follows the dataset's parameter channels (coords + N params)
-        ctx = {'branch_dim': train_loader.dataset.tensors[0].shape[1] - 2}
+    if args.model in coord_models | {'deeponet', 'ae', 'fno', 'pt', 'unet', 'vit'}:
+        # parameter channels follow the dataset (coords + N params)
+        ctx = {'n_param': train_loader.dataset.tensors[0].shape[1] - 2}
     if args.model in ('fs_deeponet', 'fs_lap_deeponet'):
         data_raw = torch.load(args.data_path, weights_only=False)
         train_idx, _ = get_split_indices(data_raw['x'].shape[0])
-        ctx = build_fs_ctx(data_raw['y'].float(), data_raw['x'][:, 2:5, 0, 0].float(),
-                           train_idx, x_norm, y_norm)
+        ctx = {**ctx, **build_fs_ctx(data_raw['y'].float(), data_raw['x'][:, 2:, 0, 0].float(),
+                                     train_idx, x_norm, y_norm)}
     model = build_model(args.model, use_fourier, ctx).to(device)
     if args.model in coord_models:
         model = GridAdapter(model).to(device)
@@ -308,7 +310,7 @@ def main():
             torch.save({
                 'model_state': model.state_dict(),
                 'config': {'use_fourier': use_fourier,
-                           'branch_dim': (ctx or {}).get('branch_dim', 3)},
+                           'n_param': (ctx or {}).get('n_param', 3)},
                 'epoch': ep,
                 'best_test_loss': best_test_loss
             }, save_path)

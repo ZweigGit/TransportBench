@@ -81,7 +81,7 @@ def main():
     checkpoint_fourier = cfg.get('use_fourier', use_fourier)
     
     model = build_model(args.model, checkpoint_fourier,
-                         ctx={'branch_dim': cfg.get('branch_dim', 3)}).to(device)
+                         ctx={'n_param': cfg.get('n_param', 3)}).to(device)
     if args.model in coord_models:
         model = GridAdapter(model).to(device)
     state = checkpoint.get('model_state', checkpoint)

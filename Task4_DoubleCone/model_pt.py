@@ -32,7 +32,7 @@ class PointTransformer(nn.Module):
         if use_fourier:
             # Fourier encoding with reduced frequency
             self.fourier_encoder = FourierEncoding(in_dim=2, num_freqs=4)
-            augmented_dim = 3 + self.fourier_encoder.out_dim  # 3 + 16 = 19
+            augmented_dim = (in_channels - 2) + self.fourier_encoder.out_dim  # params + fourier
         else:
             self.fourier_encoder = None
             augmented_dim = in_channels  # 5
@@ -89,7 +89,7 @@ class PointTransformer(nn.Module):
         
         if self.use_fourier:
             coords = points[:, :, 0:2]  # [B, N, 2]
-            physics = points[:, :, 2:5]  # [B, N, 3]
+            physics = points[:, :, 2:]   # [B, N, n_params]
             
             # Fourier encoding
             coords_feat = self.fourier_encoder(coords)  # [B, N, 16]
