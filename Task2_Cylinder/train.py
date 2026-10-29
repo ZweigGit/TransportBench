@@ -20,13 +20,14 @@ from model_hyper_mscale_deeponet import HyperMscaleDeepONet
 from model_c_hyperdeeponet import c_HyperDeepONet
 from model_fusion_deeponet import Fusion_DeepONet
 from model_residual_fusion_deeponet import Residual_Fusion_DeepONet
+from model_residual_fusion_deeponet_phi import Residual_Fusion_DeepONet_Phi
 from model_wavelet_deeponet import WaveletDeepONet
 from data_loader import CylinderDataset
 
 def get_args():
     parser = argparse.ArgumentParser(description="TransportBench - Task II: Cylinder Flow")
     parser.add_argument('--model', type=str, required=True,
-                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet'],
+                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'residual_fusion_deeponet_phi', 'wavelet_deeponet'],
                         help='Choose the baseline model')
     parser.add_argument('--epochs', type=int, default=2500, help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=48, help='Batch size')
@@ -103,6 +104,10 @@ def main():
         # Same 1,010,034 params; branch-to-trunk gate uses 1+skip (residual)
         model = Residual_Fusion_DeepONet(branch_dim=2, trunk_dim=2, hidden_dim=278, num_outputs=4,
                                          depth=5, activation='GELU')
+    elif args.model == 'residual_fusion_deeponet_phi':
+        # 1,010,016 params; Phi (B-spline) trunk activation, no trunk sin term
+        model = Residual_Fusion_DeepONet_Phi(branch_dim=2, trunk_dim=2, hidden_dim=278, num_outputs=4,
+                                             depth=5, activation='GELU')
     elif args.model == 'wavelet_deeponet':
         # 989,188 real dof (~0.99M budget, LN-free branch); complex trunk params count as 2
         model = WaveletDeepONet(branch_dim=2, trunk_dim=2, branch_hidden=256,
