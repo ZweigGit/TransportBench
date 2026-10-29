@@ -50,6 +50,16 @@ class MscaleDeepONet(nn.Module):
         trunk_layers.append(nn.Linear(hidden_dim, hidden_dim))
         self.trunk_net = nn.Sequential(*trunk_layers)
 
+        # Phi is exactly 0 for x<=0 and ~x^2 near 0, so default Linear init
+        # (pre-acts ~+-0.04) squashes hidden activations to ~0 layer by layer
+        # and kills all gradients. Larger init keeps pre-acts inside the
+        # support [0, 3] where Phi has unit-scale outputs and healthy grads.
+        for m in self.trunk_net:
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight, gain=6.0)
+                fan_in = m.weight.shape[1]
+                nn.init.uniform_(m.bias, -6.0 / fan_in ** 0.5, 6.0 / fan_in ** 0.5)
+
         self.num_outputs = num_outputs
         self.hidden_dim = hidden_dim
 
