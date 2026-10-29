@@ -36,18 +36,9 @@ def get_split_indices(n_total):
     Shared by train and eval to guarantee the same test set.
     Returns: (train_idx, test_idx)
     """
-    if n_total == 51:
-        n_train = 45
-        n_test = 6
-        print(">>> Detected Full 51 Cases! Using 45 Train / 6 Test split. <<<")
-    elif n_total == 32:
-        n_train = 28
-        n_test = 4
-        print(">>> Warning: Only detected 32 Cases! Using 28 Train / 4 Test split. <<<")
-    else:
-        n_test = max(1, int(n_total * 0.1))
-        n_train = n_total - n_test
-        print(f">>> Detected {n_total} Cases. Using {n_train} Train / {n_test} Test. <<<")
+    assert n_total == 45, f"expected the deduped 45-case dataset, got {n_total}"
+    n_train, n_test = 36, 9
+    print(">>> Using 36 Train / 9 Test split. <<<")
 
     g_cpu = torch.Generator()
     g_cpu.manual_seed(42)
@@ -66,10 +57,12 @@ def vacuum_mask(y_data):
 def consolidate_duplicates(params, y_train):
     """Replace labels of exact-duplicate param rows by their group mean.
 
-    18 of 51 samples share identical (Ma, Tw, Re) with different fields (the
-    freestream state is not pinned by the exposed params), so the MSE-optimal
+    Duplicate exposed-parameter rows (same Ma/Tv/Re, differing only in an
+    unexposed DoE axis) carry indistinguishable inputs, so the MSE-optimal
     target E[y|theta] is best estimated by the duplicate-group mean. Operates
     in-place on y_train (p already log10); stats keep using the raw labels.
+    Slices all param channels (x[:, 2:]) so a 4-param row only groups when
+    Twall matches too.
     """
     n = params.shape[0]
     d = torch.cdist(params, params)
@@ -122,7 +115,7 @@ def get_dataloader_and_stats(data_path, batch_size, device, consolidate=False):
 
     y_train_c = y_data[train_idx].clone()
     if consolidate:
-        consolidate_duplicates(x_data[train_idx, 2:5, 0, 0], y_train_c)
+        consolidate_duplicates(x_data[train_idx, 2:, 0, 0], y_train_c)
     x_train, y_train = x_data[train_idx].to(device), y_train_c.to(device)
     x_test, y_test = x_data[test_idx].to(device), y_data[test_idx].to(device)
 

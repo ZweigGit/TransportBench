@@ -3,19 +3,15 @@ import torch.nn as nn
 
 from model_wavelet_deeponet import GaborActivation, ComplexLinear, _ComplexLN
 
-
-class sin_act(nn.Module):
-    def forward(self, x):
-        return torch.sin(x)
-
 # Hybrid of Fusion_DeepONet and WaveletDeepONet: the fusion branch (LayerNorm
-# + scalar modulation ab/cb/a1b/F1b/c1b with GELU+sin, cumulative skip) is
-# kept unchanged; the trunk's Linear -> LN -> Act stack becomes its complex
+# + scalar modulation ab/cb, cumulative skip; no sine term) is kept unchanged;
+# the trunk's Linear -> LN -> Act stack becomes its complex
 # form ComplexLinear -> ComplexLN -> Gabor(w0, s0), where the activation is
 # the continuous Gabor wavelet psi(z) = exp(i*w0*z) * exp(-|s0*z|^2). The
 # fusion gate (elementwise product with the branch skip features) broadcasts
-# the real skip over the complex trunk states; trunk-side modulation scalars
-# (at/ct/a1t/F1t/c1t, built for the GELU+sin trunk) are dropped. The real
+# the real skip over the complex trunk states; the modulation scalars of the
+# original GELU+sin fusion trunk (a1b/F1b/c1b on the branch, at/ct/a1t/F1t/
+# c1t on the trunk) are dropped. The real
 # part of the final complex trunk output feeds the usual DeepONet inner
 # product.
 
@@ -33,7 +29,8 @@ class Fusion_Wavelet_DeepONet(nn.Module):
         depth: hidden layers per side (5)
         basis_size: trunk feature dim = inner-product width (128)
         w0, s0: Gabor wavelet frequency / dilation (fixed, not trained)
-        activation: branch activation ('GELU' or 'Tanh')
+        activation: branch activation ('GELU' or 'Tanh'); the branch has no
+            sine second term (unlike Fusion_DeepONet)
     """
     def __init__(self, branch_dim=3, trunk_dim=2, hidden_dim=259,
                  trunk_hidden=259, num_outputs=4, depth=5, basis_size=128,
@@ -50,17 +47,14 @@ class Fusion_Wavelet_DeepONet(nn.Module):
         else:
             raise ValueError(f"Unsupported activation: {activation}")
 
-        self.act2 = sin_act()
         self.act_t = GaborActivation(w0, s0)
 
         self.L = depth + 1
 
-        # Branch-side scalar modulation (trunk side dropped with the GELU+sin trunk)
+        # Branch-side scalar modulation (sine-term scalars a1b/F1b/c1b and the
+        # trunk-side set are dropped)
         self.ab  = nn.Parameter(torch.full((self.L,), 0.1))
         self.cb  = nn.Parameter(torch.full((self.L,), 0.1))
-        self.a1b = nn.Parameter(torch.zeros(self.L,))
-        self.F1b = nn.Parameter(torch.full((self.L,), 0.1))
-        self.c1b = nn.Parameter(torch.zeros(self.L,))
 
         # Branch Net (same as Fusion_DeepONet; final Linear emits
         # num_outputs * basis_size coefficients)
@@ -108,8 +102,7 @@ class Fusion_Wavelet_DeepONet(nn.Module):
 
         for i in range(self.L - 1):
             z_b = self.ln_b[i](self.branch_net[i](x_branch))
-            x_branch = self.act(10 * self.ab[i] * z_b + self.cb[i]) + \
-                10 * self.a1b[i] * self.act2(10 * self.F1b[i] * z_b + self.c1b[i])
+            x_branch = self.act(10 * self.ab[i] * z_b + self.cb[i])
             skip.append(x_branch)
 
         # Cumulative skip accumulation

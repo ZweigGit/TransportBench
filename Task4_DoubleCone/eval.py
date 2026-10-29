@@ -18,8 +18,8 @@ def get_args():
                         help='Path to dataset')
     parser.add_argument('--checkpoint', type=str, default=None,
                         help='Path to checkpoint (default: output/<model><_fourier|_nofourier>/best_model.pth)')
-    parser.add_argument('--sample_idx', type=int, default=50,
-                        help='Global sample index to visualize (Default: 50 for Benchmark Case)')
+    parser.add_argument('--sample_idx', type=int, default=0,
+                        help='Global sample index to visualize (default: 0)')
     parser.add_argument('--test_sample_idx', type=int, default=0,
                         help='Index into the TEST set to visualize (default: 0 = first test sample)')
     parser.add_argument('--output_dir', type=str, default=None,
@@ -223,7 +223,11 @@ def main():
         plt.close(fig)
         print(f"Saved visualization to: {output_img}")
 
-    # Benchmark Case: global index 50, unchanged (train sample, literature benchmark)
+    # Benchmark Case: arbitrary sample, pass --sample_idx (was global idx 50 of the
+    # pre-dedup 51-field dataset; that index no longer exists after dedup to 45)
+    if not (0 <= args.sample_idx < x_data.shape[0]):
+        raise ValueError(f"--sample_idx {args.sample_idx} out of range: "
+                         f"dataset has {x_data.shape[0]} samples (0..{x_data.shape[0]-1})")
     print(f"Extracting Benchmark Case (Global Idx {args.sample_idx}).")
     visualize_sample(args.sample_idx, "Benchmark Case", "inference_benchmark.png")
 
