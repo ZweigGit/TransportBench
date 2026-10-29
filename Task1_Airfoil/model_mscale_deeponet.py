@@ -41,12 +41,13 @@ class MscaleDeepONet(nn.Module):
         branch_layers.append(nn.Linear(hidden_dim, hidden_dim * num_outputs))
         self.branch_net = nn.Sequential(*branch_layers)
 
-        # Trunk Net: Input -> [Hidden -> Act] x depth -> Linear -> Act, same shape
-        # as BoltzmannDeepONet trunk but with Phi (B-spline) activation throughout
+        # Trunk Net: Input -> [Hidden -> Phi] x depth -> Linear (no output act),
+        # same shape as BoltzmannDeepONet trunk but with Phi (B-spline) activation
+        # in hidden layers only
         trunk_layers = [nn.Linear(trunk_dim, hidden_dim), trunk_act]
         for _ in range(depth - 1):
             trunk_layers.extend([nn.Linear(hidden_dim, hidden_dim), trunk_act])
-        trunk_layers.extend([nn.Linear(hidden_dim, hidden_dim), trunk_act])
+        trunk_layers.append(nn.Linear(hidden_dim, hidden_dim))
         self.trunk_net = nn.Sequential(*trunk_layers)
 
         self.num_outputs = num_outputs

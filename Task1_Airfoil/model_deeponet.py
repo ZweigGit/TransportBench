@@ -38,8 +38,8 @@ class BoltzmannDeepONet(nn.Module):
         for _ in range(depth - 1):
             trunk_layers.extend([nn.Linear(hidden_dim, hidden_dim), self.act])
             
-        # Final layer: Output hidden_dim (acts as basis functions)
-        trunk_layers.extend([nn.Linear(hidden_dim, hidden_dim), self.act])
+        # Final layer: Output hidden_dim (acts as basis functions), no activation
+        trunk_layers.append(nn.Linear(hidden_dim, hidden_dim))
         
         self.trunk_net = nn.Sequential(*trunk_layers)
         
