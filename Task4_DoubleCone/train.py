@@ -61,6 +61,8 @@ def get_args():
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--consolidate', action='store_true',
                         help='Replace duplicate-param train labels by group mean')
+    parser.add_argument('--best_after', type=int, default=1000,
+                        help='Start tracking/saving the best checkpoint after this epoch')
     return parser.parse_args()
 
 def build_fs_ctx(y_raw, param_raw, train_idx, x_norm, y_norm):
@@ -110,7 +112,7 @@ def build_model(model_name, use_fourier, ctx=None):
     elif model_name == 'unet': return FluidUNet(in_channels=inch, out_channels=4, features=64, use_fourier=use_fourier)
     elif model_name == 'vit': return VisionTransformer(in_channels=inch, out_channels=4, embed_dim=512, depth=10, use_fourier=use_fourier)
     # Coordinate-based (branch = Mach/Temp/Re, trunk = x/y grid coords)
-    elif model_name == 'hyperdeeponet': return HyperDeepONet(branch_dim=npar, branch_hidden=45, trunk_hidden=64, trunk_depth=4, branch_depth=4, basis_size=128, use_fourier=use_fourier)
+    elif model_name == 'hyperdeeponet': return HyperDeepONet(branch_dim=npar, branch_hidden=45, trunk_hidden=64, trunk_depth=4, branch_depth=4, basis_size=128)
     # Single-trunk ablation of the multi-scale trunk (no scale branches, no
     # frequency scaling, LN-free) with Phi trunk activation and fusion-style
     # learnable per-layer modulation act(10*a*z + c): branch [3,313x5,512] GELU,
@@ -178,7 +180,8 @@ def main():
     # so they train with the same curriculum-weighted MSE as grid models
     coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'fusion_wavelet_deeponet', 'fs_deeponet', 'fs_lap_deeponet'}
     # Coord variants without a Fourier option get no suffix (only hyperdeeponet supports it)
-    fourierless = coord_models - {'hyperdeeponet'}
+    # Coord variants have no Fourier option: no _fourier suffix in run names
+    fourierless = coord_models
     fourier_suffix = "" if args.model in fourierless else ("_fourier" if use_fourier else "_nofourier")
 
     # Per-model output subdirectory, aligned with Task I convention
@@ -302,8 +305,8 @@ def main():
         if ep % 50 == 0 or ep == args.epochs - 1:
             log(f"Ep {ep:04d} | LR: {scheduler.get_last_lr()[0]:.1e} | Train: {train_loss_val:.4g} | Test(Pure): {test_loss_val:.4g} | W_wall: {w_wall:.1f}")
 
-        # Save best model after epoch 1000 to prevent early overfitting
-        if ep >= 1000 and test_loss_val < best_test_loss:
+        # Save best model after --best_after (default 1000) to prevent early overfitting
+        if ep >= args.best_after and test_loss_val < best_test_loss:
             best_test_loss = test_loss_val
             best_test_epoch = ep
             

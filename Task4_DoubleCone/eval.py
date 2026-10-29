@@ -32,8 +32,8 @@ def main():
     fourier_suffix = "_fourier" if use_fourier else "_nofourier"
     # Coordinate-based DeepONet variants, wrapped behind the grid image interface
     coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'fs_deeponet', 'fs_lap_deeponet'}
-    # Coord variants without a Fourier option get no suffix (only hyperdeeponet supports it)
-    fourierless = coord_models - {'hyperdeeponet'}
+    # Coord variants have no Fourier option: no _fourier suffix in run names
+    fourierless = coord_models
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     run_name = args.model + ('' if args.model in fourierless else fourier_suffix)
@@ -78,7 +78,9 @@ def main():
     # Load model and weights
     checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
     cfg = checkpoint.get('config', {})
-    checkpoint_fourier = cfg.get('use_fourier', use_fourier)
+    # fourierless (coord) ckpts may carry a stale use_fourier label from the
+    # era when hyperdeeponet still had the flag — the option no longer exists
+    checkpoint_fourier = cfg.get('use_fourier', use_fourier) and args.model not in fourierless
     
     model = build_model(args.model, checkpoint_fourier,
                          ctx={'n_param': cfg.get('n_param', 3)}).to(device)
