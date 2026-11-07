@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
-from data_loader import MinMaxNormalizer, get_split_indices, vacuum_mask
+from data_loader import MinMaxNormalizer, get_split_indices, vacuum_mask, param_stats, fluid_stats
 from train import build_model, GridAdapter  # single source of model configs, keeps eval in sync with train
 
 def get_args():
@@ -57,20 +57,21 @@ def main():
     data_full = torch.load(args.data_path, weights_only=False)
     x_data = data_full['x'].float()
     y_data = data_full['y'].float()
-    vac = vacuum_mask(y_data).to(device)      # domain-filler cells, not targets
-    
+    vac = vacuum_mask(y_data).to(device)      # domain-filler cells; mask BEFORE the log transform
+
     y_data_log = y_data.clone()
     y_data_log[:, 3, :, :] = torch.log10(y_data[:, 3, :, :] + 1e-6)
-    
-    # Same seeded split as training; stats computed on TRAIN split only (no test leakage)
+
+    # Same seeded split as training; stats computed on TRAIN split only (no test leakage),
+    # targets on fluid cells only (same rule as data_loader.get_dataloader_and_stats)
     train_idx, test_idx = get_split_indices(x_data.shape[0])
 
     x_train = x_data[train_idx]
     y_train = y_data_log[train_idx]
-    x_min = torch.amin(x_train, dim=(0, 2, 3), keepdim=True).to(device)
-    x_max = torch.amax(x_train, dim=(0, 2, 3), keepdim=True).to(device)
-    y_min = torch.amin(y_train, dim=(0, 2, 3), keepdim=True).to(device)
-    y_max = torch.amax(y_train, dim=(0, 2, 3), keepdim=True).to(device)
+    x_min, x_max = param_stats(x_train)
+    y_min, y_max = fluid_stats(y_train, ~vac.cpu())
+    x_min, x_max = x_min.to(device), x_max.to(device)
+    y_min, y_max = y_min.to(device), y_max.to(device)
 
     x_norm = MinMaxNormalizer(min_val=x_min, max_val=x_max)
     y_norm = MinMaxNormalizer(min_val=y_min, max_val=y_max)

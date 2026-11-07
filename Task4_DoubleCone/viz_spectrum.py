@@ -75,11 +75,11 @@ def main():
     train_idx, test_idx = get_split_indices(x_data.shape[0])
     y_log = y_data.clone()
     y_log[:, 3] = torch.log10(y_data[:, 3] + 1e-6)
-    from data_loader import MinMaxNormalizer
-    x_norm = MinMaxNormalizer(torch.amin(x_data[train_idx], dim=(0, 2, 3), keepdim=True),
-                              torch.amax(x_data[train_idx], dim=(0, 2, 3), keepdim=True)).to(device)
-    y_norm = MinMaxNormalizer(torch.amin(y_log[train_idx], dim=(0, 2, 3), keepdim=True),
-                              torch.amax(y_log[train_idx], dim=(0, 2, 3), keepdim=True)).to(device)
+    from data_loader import MinMaxNormalizer, param_stats, fluid_stats
+    x_min, x_max = param_stats(x_data[train_idx])
+    y_min, y_max = fluid_stats(y_log[train_idx], torch.from_numpy(valid))
+    x_norm = MinMaxNormalizer(x_min, x_max).to(device)
+    y_norm = MinMaxNormalizer(y_min, y_max).to(device)
 
     gi = test_idx[args.test_sample_idx].item()
     x_in = x_data[gi].unsqueeze(0).to(device)

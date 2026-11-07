@@ -50,8 +50,33 @@ def vacuum_mask(y_data):
     """Bool [H, W] mask of domain-filler cells: pressure == 0 in every sample
     (body-interior wedge + outflow-boundary corners of the body-fitted mesh).
     All four channels are exactly zero there in all samples - not physical
-    targets, identical across the whole dataset."""
+    targets, identical across the whole dataset.
+
+    Must be called on RAW physical targets, before the log10 pressure transform:
+    in log space those cells are log10(1e-6) = -6, never 0, so a mask taken
+    afterwards silently matches nothing.
+    """
     return (y_data[:, 3] == 0).all(dim=0)
+
+
+def fluid_stats(y_train, fluid_mask):
+    """Per-channel min/max [1, C, 1, 1] over fluid cells of the train split only.
+
+    fluid_mask is the boolean [H, W] selecting the cells to keep, i.e. ~vacuum_mask(y_raw).
+    Vacuum fillers are excluded: for pressure they sit at log10(1e-6) = -6, i.e.
+    8 decades below the fluid range, and including them would stretch the
+    normalizer span from 3.63 to 11.53 so that real targets only ever occupy
+    31% of the [0, 1] range the model has to hit.
+    """
+    fluid_mask = fluid_mask.to(y_train.device)
+    sel = y_train[:, :, fluid_mask]                 # [S, C, F]
+    return sel.amin(dim=(0, 2)).view(1, -1, 1, 1), sel.amax(dim=(0, 2)).view(1, -1, 1, 1)
+
+
+def param_stats(x_train):
+    """Per-channel min/max [1, C, 1, 1] for the input image (dense field, no mask)."""
+    return (torch.amin(x_train, dim=(0, 2, 3), keepdim=True),
+            torch.amax(x_train, dim=(0, 2, 3), keepdim=True))
 
 
 def consolidate_duplicates(params, y_train):
@@ -96,7 +121,11 @@ def get_dataloader_and_stats(data_path, batch_size, device, consolidate=False):
     data = torch.load(data_path, weights_only=False)
     x_data = data['x'].float()
     y_data = data['y'].float()
-    
+
+    # Mask BEFORE the log transform: vacuum cells are p == 0 and become
+    # log10(1e-6) = -6 once transformed (see vacuum_mask docstring).
+    vac = vacuum_mask(y_data)
+
     print("Applying Standard Log10-transform to Pressure channel (Index 3)...")
     y_data[:, 3, :, :] = torch.log10(y_data[:, 3, :, :] + 1e-6)
 
@@ -105,13 +134,11 @@ def get_dataloader_and_stats(data_path, batch_size, device, consolidate=False):
 
     print(f"Dataset Split -> Total: {n_total} | Train: {len(train_idx)} | Test: {len(test_idx)}")
 
-    # Min-max statistics computed on TRAIN split only (no test leakage)
+    # Min-max statistics computed on TRAIN split only (no test leakage); targets
+    # use fluid cells only so the vacuum floor does not stretch the [0, 1] range.
     print("Computing min-max statistics on train split...")
-    x_train_raw, y_train_raw = x_data[train_idx], y_data[train_idx]
-    x_min = torch.amin(x_train_raw, dim=(0, 2, 3), keepdim=True)
-    x_max = torch.amax(x_train_raw, dim=(0, 2, 3), keepdim=True)
-    y_min = torch.amin(y_train_raw, dim=(0, 2, 3), keepdim=True)
-    y_max = torch.amax(y_train_raw, dim=(0, 2, 3), keepdim=True)
+    x_min, x_max = param_stats(x_data[train_idx])
+    y_min, y_max = fluid_stats(y_data[train_idx], ~vac)
 
     y_train_c = y_data[train_idx].clone()
     if consolidate:
@@ -125,4 +152,4 @@ def get_dataloader_and_stats(data_path, batch_size, device, consolidate=False):
     x_norm = MinMaxNormalizer(x_min, x_max).to(device)
     y_norm = MinMaxNormalizer(y_min, y_max).to(device)
 
-    return train_loader, test_loader, x_norm, y_norm, vacuum_mask(y_data)
+    return train_loader, test_loader, x_norm, y_norm, vac

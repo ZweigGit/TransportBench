@@ -189,6 +189,10 @@ def main():
         f.write(f"Model       : {args.model.upper()}\n")
         f.write(f"Checkpoint  : {ckpt_path}\n")
         f.write(f"Metric space: normalized [0,1], fluid-only ({n_fluid} pts)\n")
+        transforms = [f"{v}={dataset.stats[v]['transform']}"
+                      for v in dataset.stats if dataset.stats[v].get('transform', 'identity') != 'identity']
+        if transforms:
+            f.write(f"Channel transforms: {', '.join(transforms)} (metrics are in that space)\n")
         f.write(f"MAE         : {final_mae:.4g}\n")
         f.write(f"MSE         : {final_mse:.4g}\n")
         f.write(f"RL2E        : {final_rel_l2:.4g}\n")

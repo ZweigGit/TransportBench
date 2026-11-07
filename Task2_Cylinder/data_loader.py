@@ -61,7 +61,14 @@ class CylinderDataset(Dataset):
 
     def fit_train_normalizer(self, train_indices):
         """Re-normalize flow_label in place: un-normalize stored [-1,1] (full-data stats),
-        then min-max normalize to [0,1] with per-channel stats from TRAIN split only."""
+        then min-max normalize to [0,1] with per-channel stats from TRAIN split only.
+
+        All arithmetic happens in the file's own value space. For channels stored
+        as log10 (flow_stats[...]['transform'] == 'log10', i.e. rho in the
+        *_logrho dataset) that space is log10 of the physical field, so the
+        [0,1] values the loss sees are log-space as well. denormalize() maps
+        those back to physical values.
+        """
         self.train_min, self.train_max = {}, {}
         for i, var in enumerate(self.stats.keys()):
             gmin, gmax = self.stats[var]['min'], self.stats[var]['max']
@@ -76,10 +83,21 @@ class CylinderDataset(Dataset):
             b = ((gmax + gmin) / 2.0 - tmin) / rng
             self.flow_label[..., i] = self.flow_label[..., i] * a + b
         print(f"Train-only min-max normalization applied: {len(train_indices)} train samples.")
+        for var in self.stats.keys():
+            if self.stats[var].get('transform', 'identity') != 'identity':
+                print(f"  note: channel '{var}' is stored as {self.stats[var]['transform']}; "
+                      f"[0,1] values are in that space, not physical units.")
 
     def denormalize(self, tensor, var_name):
-        """Denormalize from [0, 1] train-only to physical values"""
+        """Denormalize from [0, 1] train-only to physical values.
+
+        Inverts the stored transform as well: a log10 channel is exponentiated
+        back before the affine map, so the result is in physical units.
+        """
         if self.train_min is None:
             raise RuntimeError("fit_train_normalizer() must be called before denormalize()")
         _min, _max = self.train_min[var_name], self.train_max[var_name]
-        return tensor * (_max - _min) + _min
+        out = tensor * (_max - _min) + _min
+        if self.stats[var_name].get('transform', 'identity') == 'log10':
+            out = torch.pow(10.0, out)
+        return out
