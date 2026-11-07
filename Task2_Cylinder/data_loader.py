@@ -64,8 +64,8 @@ class CylinderDataset(Dataset):
         then min-max normalize to [0,1] with per-channel stats from TRAIN split only.
 
         All arithmetic happens in the file's own value space. For channels stored
-        as log10 (flow_stats[...]['transform'] == 'log10', i.e. rho in the
-        *_logrho dataset) that space is log10 of the physical field, so the
+        as log10 (flow_stats[...]['transform'] == 'log10', i.e. rho in the default
+        cylinder_full_2400.pt) that space is log10 of the physical field, so the
         [0,1] values the loss sees are log-space as well. denormalize() maps
         those back to physical values.
         """

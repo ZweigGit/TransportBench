@@ -35,8 +35,8 @@ CHANNELS = ['rho', 'u', 'v', 'T']
 
 def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    default_src = os.path.join(script_dir, '..', 'data', 'cylinder_full_2400.pt')
-    default_dst = os.path.join(script_dir, '..', 'data', 'cylinder_full_2400_logrho.pt')
+    default_src = os.path.join(script_dir, '..', 'data', 'cylinder_full_2400_old.pt')
+    default_dst = os.path.join(script_dir, '..', 'data', 'cylinder_full_2400.pt')
 
     p = argparse.ArgumentParser(description="Build the log10-rho variant of the Task II cylinder dataset")
     p.add_argument('--src', default=default_src, help='Source dataset (.pt)')
