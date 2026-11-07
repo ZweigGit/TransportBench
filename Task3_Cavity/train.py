@@ -23,9 +23,16 @@ def get_args():
     parser.add_argument('--epochs', type=int, default=2500, help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=256, help='Batch size')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
-    parser.add_argument('--data_dir', type=str, default='./data/cavity', help='Directory containing .npz data')
+    parser.add_argument('--data_dir', type=str, default=None,
+                        help='Directory containing .npz data (default: <repo>/data/cavity)')
     parser.add_argument('--save_dir', type=str, default='./checkpoints', help='Directory to save models')
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.data_dir is None:
+        # Resolve relative to this script, so the default works from any CWD
+        # (the shared datasets live in <repo>/data, one level above this task).
+        here = os.path.dirname(os.path.abspath(__file__))
+        args.data_dir = os.path.join(here, '..', 'data', 'cavity')
+    return args
 
 def main():
     args = get_args()

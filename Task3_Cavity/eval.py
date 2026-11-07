@@ -19,10 +19,17 @@ def get_args():
     parser = argparse.ArgumentParser(description="Evaluation Script for Task III: Cavity Flow")
     parser.add_argument('--model', type=str, required=True, 
                         choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt'], help='Choose model')
-    parser.add_argument('--data_dir', type=str, default='./data/cavity', help='Path to .npz data')
+    parser.add_argument('--data_dir', type=str, default=None,
+                        help='Path to .npz data (default: <repo>/data/cavity)')
     parser.add_argument('--checkpoint', type=str, default='./checkpoints/best_model_{}.pth', help='Path to weights')
     parser.add_argument('--output_dir', type=str, default=None, help='Directory to save results (default: output/<model>)')
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.data_dir is None:
+        # Resolve relative to this script, so the default works from any CWD
+        # (the shared datasets live in <repo>/data, one level above this task).
+        here = os.path.dirname(os.path.abspath(__file__))
+        args.data_dir = os.path.join(here, '..', 'data', 'cavity')
+    return args
 
 def main():
     args = get_args()
