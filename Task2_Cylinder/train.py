@@ -32,9 +32,16 @@ def get_args():
     parser.add_argument('--epochs', type=int, default=2500, help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=48, help='Batch size')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
-    parser.add_argument('--data_path', type=str, default='./data/cylinder_full_2400.pt', help='Path to dataset')
+    parser.add_argument('--data_path', type=str, default=None,
+                        help='Path to dataset (default: <repo>/data/cylinder_full_2400.pt)')
     parser.add_argument('--save_dir', type=str, default='./checkpoints', help='Directory to save models')
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.data_path is None:
+        # Resolve relative to this script, so the default works from any CWD
+        # (the shared datasets live in <repo>/data, one level above this task).
+        here = os.path.dirname(os.path.abspath(__file__))
+        args.data_path = os.path.join(here, '..', 'data', 'cylinder_full_2400.pt')
+    return args
 
 def main():
     args = get_args()

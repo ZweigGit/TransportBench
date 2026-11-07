@@ -28,11 +28,18 @@ def get_args():
     parser.add_argument('--model', type=str, required=True,
                         choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'residual_fusion_deeponet_phi', 'wavelet_deeponet'],
                         help='Choose the baseline model to evaluate')
-    parser.add_argument('--data_path', type=str, default='./data/cylinder_full_2400.pt', help='Path to dataset')
+    parser.add_argument('--data_path', type=str, default=None,
+                        help='Path to dataset (default: <repo>/data/cylinder_full_2400.pt)')
     parser.add_argument('--checkpoint', type=str, default=None, help='Path to weights (default: output/<model>/best_model.pth)')
     parser.add_argument('--num_samples', type=int, default=3, help='Number of samples to visualize')
     parser.add_argument('--output_dir', type=str, default=None, help='Directory to save visualizations (default: output/<model>)')
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.data_path is None:
+        # Resolve relative to this script, so the default works from any CWD
+        # (the shared datasets live in <repo>/data, one level above this task).
+        here = os.path.dirname(os.path.abspath(__file__))
+        args.data_path = os.path.join(here, '..', 'data', 'cylinder_full_2400.pt')
+    return args
 
 def main():
     args = get_args()
