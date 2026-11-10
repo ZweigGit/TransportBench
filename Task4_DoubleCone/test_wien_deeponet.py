@@ -229,19 +229,92 @@ def test_basis():
     torch.manual_seed(0)
 
     x = torch.randn(2, 4, 17, 384)
-    # db2 keeps the same size table as haar and reconstructs at J=4
+    # symmetric extension carries its own boundary coefficients, so db-N
+    # bands are slightly larger than half size and there is no periodization
+    # size constraint on J anymore
     A, Ds, hw = dwt2_stack(x, 4, wavelet='db2')
-    assert hw == [(17, 384), (9, 192), (5, 96), (3, 48), (2, 24)], hw
-    assert A.shape == (2, 4, 2, 24)
+    assert hw == [(17, 384), (10, 193), (6, 98), (4, 50), (3, 26)], hw
+    assert A.shape == (2, 4, 3, 26)
     xr = idwt2_stack(A, Ds, hw, wavelet='db2')
     assert (xr - x).abs().max().item() < 1e-5, (xr - x).abs().max().item()
-    check("db2 J=4 pyramid: same sizes, perfect reconstruction")
+    check("db2 J=4 pyramid (symmetric): size table + perfect reconstruction")
 
-    # db4 needs J<=2 (periodization: signal >= filter length per level)
-    A2, Ds2, hw2 = dwt2_stack(x, 2, wavelet='db4')
+    A2, Ds2, hw2 = dwt2_stack(x, 4, wavelet='db4')
+    assert hw2 == [(17, 384), (12, 195), (9, 101), (8, 54), (7, 30)], hw2
     xr2 = idwt2_stack(A2, Ds2, hw2, wavelet='db4')
     assert (xr2 - x).abs().max().item() < 1e-4
-    check("db4 J=2 pyramid: perfect reconstruction")
+    check("db4 J=4 pyramid (symmetric, no J<=2 constraint): perfect reconstruction")
+
+
+def test_harmonic_fill():
+    """The pre-factorized fill must equal the notebook's sparse Laplace solve."""
+    import numpy as np
+    import scipy.sparse as sp
+    from scipy.sparse.linalg import spsolve
+    from wavelet_haar import harmonic_fill, harmonic_fill_operator
+    from data_loader import vacuum_mask
+
+    data = torch.load('../data/double_cone_dataset.pt', weights_only=False)
+    y = data['y'].float()
+    vac = vacuum_mask(y)
+    f = y[0, 0].clone()                       # raw channel, any values work
+    f[vac] = 0.0
+
+    # reference: per-unknown sparse solve (notebook formulation)
+    H, W = vac.shape
+    v = vac.numpy()
+    idx = np.full((H, W), -1, dtype=np.int64); idx[v] = np.arange(v.sum())
+    rows, cols, vals = [], [], []
+    rhs = np.zeros(int(v.sum()))
+    for i, j in zip(*np.where(v)):
+        k = int(idx[i, j]); rows.append(k); cols.append(k); vals.append(4.0)
+        for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            ii, jj = i + di, j + dj
+            if not (0 <= ii < H and 0 <= jj < W): vals[-1] -= 1.0
+            elif not v[ii, jj]: rhs[k] += float(f[ii, jj])
+            else: rows.append(k); cols.append(int(idx[ii, jj])); vals.append(-1.0)
+    A = sp.csr_matrix((vals, (rows, cols)), shape=(int(v.sum()),) * 2).tocsc()
+    ref = f.clone()
+    ref[vac] = torch.as_tensor(spsolve(A, rhs)).float()   # spsolve is float64
+
+    M = harmonic_fill_operator(vac)
+    got = harmonic_fill(f[None, None], M, vac)[0, 0]
+    err = (got - ref).abs().max().item()
+    assert err < 1e-4, err                    # float32 matmul vs float64 solve
+    assert torch.equal(got[~vac], f[~vac])    # fluid passes through exactly
+    check(f"harmonic_fill matches the sparse Laplace solve (max diff {err:.1e})")
+
+    # differentiable in the fluid neighbours (rhs): grads reach the fluid cells
+    g = y[0, 0].clone().requires_grad_()
+    out = harmonic_fill(g[None, None], M, vac)
+    out[0, 0][vac].sum().backward()
+    assert g.grad is not None and torch.isfinite(g.grad).all()
+    assert g.grad[~vac].abs().sum() > 0
+    check("harmonic_fill gradients flow into the fluid boundary cells")
+
+
+def test_support_masks():
+    from wavelet_haar import support_masks
+    from data_loader import vacuum_mask
+    data = torch.load('../data/double_cone_dataset.pt', weights_only=False)
+    vac = vacuum_mask(data['y'].float())
+
+    # fully valid field -> every coefficient counts
+    w = support_masks(torch.ones(17, 384), 2, 'db4')
+    assert all((m == 1).all() for m in w)
+    check("support_masks: all-valid grid -> all ones at every level")
+
+    # real vacuum layout (cone interior + outflow corners, cells in every row):
+    # coefficients whose filter reach crosses vacuum cells are excluded.
+    # MEASURED on this mask (not derived): db4 level-1 band rows 0/2/3 sit
+    # against vacuum-dominated real rows in the strip columns, rows >= 4 don't.
+    w = support_masks((~vac).float(), 2, 'db4')
+    w1 = w[-1]
+    assert w1[0, 4:96].float().mean() < 0.1       # top-edge row mostly excluded
+    assert bool((w1[4:, 4:96] == 1).all())        # deep rows over the strip stay
+    frac = sum(m.sum() for m in w) / sum(m.numel() for m in w)
+    assert 0.7 < frac < 0.95, frac            # most coefficients stay fluid-only
+    check(f"support_masks: vacuum-strip coefficients excluded ({frac:.1%} kept)")
 
 
 def test_sweep_wiring():
@@ -286,6 +359,8 @@ if __name__ == "__main__":
     test_stage3()
     test_stage3_real()
     test_basis()
+    test_harmonic_fill()
+    test_support_masks()
     test_sweep_wiring()
     test_basis_cuda()
     print(f"\nAll {len(PASS)} checks passed.")

@@ -1,10 +1,12 @@
 """WIEN-DeepONet DeepONet: coefficient-domain coarse-to-fine operator model.
 
 Paper-faithful data flow (redesign spec):
-- ONE DWT: the encoded target is decomposed once per batch into per-scale
-  coefficient targets. The training loss is entirely coefficient-domain
-  per-band relative MSE (energy-normalized, support-validity weighted);
-  no field-domain loss enters training (coef_loss_only).
+- ONE DWT: the encoded target is harmonically filled over its vacuum cells
+  first (no artificial step at the body), then decomposed once per batch
+  into per-scale coefficient targets. The training loss is entirely
+  coefficient-domain per-band relative MSE (energy-normalized, masked to
+  coefficients whose whole support is fluid); no field-domain loss enters
+  training (coef_loss_only).
 - Every module predicts WAVELET COEFFICIENTS at its own scale: CoarseNet
   -> A_J, Enh_j -> D_j = (LH, HL, HH). The coarse-to-fine signal is NOT a
   reconstruction recursion: each module's trunk is a coordinate function,
@@ -20,7 +22,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from wavelet_haar import dwt2_stack, idwt2_stack, support_weights, _pad_odd
+from wavelet_haar import (dwt2_stack, idwt2_stack, dwt_level, support_masks,
+                          harmonic_fill, harmonic_fill_operator)
 
 
 def _mlp(in_dim, out_dim, hidden, depth):
@@ -122,15 +125,17 @@ class WienDeepONet(nn.Module):
     physical positions, not pixel indices.
 
     forward(x, y=None): with y (encoded target), self.aux_loss carries the
-    per-band coefficient relative MSE (energy-normalized, support-validity
-    weighted) and coef_loss_only tells the trainer it is the WHOLE
-    training loss; the vacuum mask for those weights comes from
-    ctx['vac'] (train only, kept as a non-persistent buffer so eval
+    per-band coefficient relative MSE (energy-normalized, masked to
+    coefficients with fully-fluid support; y is harmonically filled before
+    its DWT) and coef_loss_only tells the trainer it is the WHOLE training
+    loss; the vacuum mask for the fill and those masks comes from
+    ctx['vac'] (train only, kept as non-persistent buffers so eval
     rebuilds strict-load cleanly).
     """
 
     uses_target = True
     coef_loss_only = True
+    _lvl_cache = {}
 
     def __init__(self, branch_dim, num_outputs=4, latent_dim=64, hidden_dim=256,
                  branch_depth=2, depth=2, levels=4, aux_weight=1.0, ctx=None):
@@ -151,16 +156,25 @@ class WienDeepONet(nn.Module):
         vac = (ctx or {}).get('vac')
         if vac is not None:
             self.register_buffer('vac', vac.clone(), persistent=False)
+            # pre-factorized Laplace fill for the encoded targets (train only,
+            # both non-persistent so eval rebuilds strict-load cleanly)
+            self.register_buffer('fill_M', harmonic_fill_operator(vac),
+                                 persistent=False)
 
-    def _scale_coords(self, xc):
-        """Mesh coords (B,2,H,W) -> per-level (B,2,H_j,W_j), coarsest-first,
-        through the same replicate-pad + 2x2 average chain as the DWT."""
-        cs = []
-        c = xc
-        for _ in range(self.levels):
-            c = F.avg_pool2d(_pad_odd(c), 2)
-            cs.append(c)
-        return cs[::-1]
+    def _level_shapes(self, H, W):
+        """Per-level A_j shapes of this model's DWT on an (H, W) field,
+        finest-first. Queried through the real dwt_level (cached) instead of
+        replicating grid math: db-N symmetric bands are slightly larger than
+        half size (db4 on 17x384 -> 12x195 -> 9x101), haar is ceil-half."""
+        key = (H, W, self.levels, self.wavelet)
+        if key not in WienDeepONet._lvl_cache:
+            a = torch.zeros(1, 1, H, W)
+            shapes = []
+            for _ in range(self.levels):
+                a = dwt_level(a, self.wavelet)[0]
+                shapes.append(tuple(a.shape[-2:]))
+            WienDeepONet._lvl_cache[key] = shapes
+        return WienDeepONet._lvl_cache[key]
 
     def _rel_mse(self, pred, targ, w):
         w = w[None, None]
@@ -173,9 +187,12 @@ class WienDeepONet(nn.Module):
         z = self.branch(x[:, 2:, 0, 0])
 
         xc = x[:, 0:2]
-        coords_lv = self._scale_coords(xc)                 # coarsest-first
+        lv = self._level_shapes(*xc.shape[-2:])            # finest-first
         # hw is level-indexed: hw[j] = A_j shape, finest (input) first
-        hw = [tuple(xc.shape[-2:])] + [tuple(c.shape[-2:]) for c in coords_lv[::-1]]
+        hw = [tuple(xc.shape[-2:])] + lv
+        # coordinate maps per level, coarsest-first, pooled onto each
+        # level's band grid so every scale sees physical positions
+        coords_lv = [F.adaptive_avg_pool2d(xc, s) for s in lv[::-1]]
 
         def flat(c):
             return c.permute(0, 2, 3, 1).reshape(B, -1, 2)
@@ -205,8 +222,12 @@ class WienDeepONet(nn.Module):
 
         self.aux_loss = None
         if y is not None and getattr(self, 'vac', None) is not None and self.aux_weight > 0:
+            # harmonic fill FIRST: the DWT targets must see no artificial step
+            # at the vacuum boundary; the fluid-support masks stay on the raw
+            # mask so the loss never counts filled-in (invented) coefficients
+            y = harmonic_fill(y, self.fill_M, self.vac)
             A_t, Ds_t, _ = dwt2_stack(y, self.levels, self.wavelet)
-            w = support_weights(~self.vac, hw)             # coarsest-first
+            w = support_masks(~self.vac, self.levels, self.wavelet)
             losses = [self._rel_mse(a_map, A_t, w[0])]
             losses += [self._rel_mse(torch.cat(bd, 1), torch.cat(bt, 1), wj)
                        for bd, bt, wj in zip(Ds, Ds_t, w)]

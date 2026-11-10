@@ -4,13 +4,14 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
-from data_loader import MinMaxNormalizer, get_split_indices, vacuum_mask, param_stats, fluid_stats
+from data_loader import (MinMaxNormalizer, get_split_indices, vacuum_mask,
+                         param_stats, fluid_stats, encode_log10, LOG10_CHANNELS)
 from train import build_model, GridAdapter  # single source of model configs, keeps eval in sync with train
 
 def get_args():
     parser = argparse.ArgumentParser(description="Evaluation for Task 4: Double Cone Flow")
     parser.add_argument('--model', type=str, required=True,
-                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'fs_deeponet', 'fs_lap_deeponet', 'wien_deeponet'],
+                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'wien_deeponet'],
                         help='Choose the model to evaluate')
     parser.add_argument('--no_fourier', action='store_true',
                         help='Model does not use Fourier encoding')
@@ -31,7 +32,7 @@ def main():
     use_fourier = not args.no_fourier
     fourier_suffix = "_fourier" if use_fourier else "_nofourier"
     # Coordinate-based DeepONet variants, wrapped behind the grid image interface
-    coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'fs_deeponet', 'fs_lap_deeponet'}
+    coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet'}
     # Coord variants have no Fourier option: no _fourier suffix in run names
     # (wien_deeponet is grid-native with no Fourier option either)
     fourierless = coord_models | {'wien_deeponet'}
@@ -60,8 +61,7 @@ def main():
     y_data = data_full['y'].float()
     vac = vacuum_mask(y_data).to(device)      # domain-filler cells; mask BEFORE the log transform
 
-    y_data_log = y_data.clone()
-    y_data_log[:, 3, :, :] = torch.log10(y_data[:, 3, :, :] + 1e-6)
+    y_data_log = encode_log10(y_data)
 
     # Same seeded split as training; stats computed on TRAIN split only (no test leakage),
     # targets on fluid cells only (same rule as data_loader.get_dataloader_and_stats)
@@ -101,8 +101,7 @@ def main():
     # Evaluate metrics on the test set (same split as training), in normalized [0,1] space
     x_test = x_data[test_idx].to(device)
     y_test_phys = y_data[test_idx].to(device)
-    y_test_log = y_test_phys.clone()
-    y_test_log[:, 3] = torch.log10(y_test_phys[:, 3] + 1e-6)  # pressure in log10 before normalization
+    y_test_log = encode_log10(y_test_phys)  # rho & p in log10 before normalization
 
     total_mae, total_mse = 0.0, 0.0
     total_l2_error, total_p_l2_error = 0.0, 0.0
@@ -150,7 +149,7 @@ def main():
     with open(eval_file, 'w', encoding='utf-8') as f:
         f.write(f"Model       : {args.model.upper()} ({'coordinate-based' if args.model in fourierless else 'fourier' if checkpoint_fourier else 'nofourier'})\n")
         f.write(f"Checkpoint  : {ckpt_path}\n")
-        f.write(f"Metric space: normalized [0,1] (p=log10), vacuum cells excluded\n")
+        f.write(f"Metric space: normalized [0,1] (rho & p = log10), vacuum cells excluded\n")
         f.write(f"MAE         : {final_mae:.4g}\n")
         f.write(f"MSE         : {final_mse:.4g}\n")
         f.write(f"RL2E        : {final_rel_l2:.4g}\n")
@@ -171,7 +170,8 @@ def main():
             y_pred_log = y_norm.decode(pred_encoded)
 
         y_pred_phys = y_pred_log.clone()
-        y_pred_phys[:, 3, :, :] = torch.pow(10, y_pred_log[:, 3, :, :])
+        for c in LOG10_CHANNELS:                    # log10-encoded channels -> physical
+            y_pred_phys[:, c, :, :] = torch.pow(10, y_pred_log[:, c, :, :])
         error = torch.abs(y_true_phys - y_pred_phys)
 
         x_np, y_true, y_pred, err = to_np(x_input), to_np(y_true_phys), to_np(y_pred_phys), to_np(error)

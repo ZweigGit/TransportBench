@@ -26,7 +26,6 @@ from model_mwavelet_deeponet import MwaveletDeepONet
 from model_wavelet_deeponet import WaveletDeepONet
 from model_residual_fusion_wavelet_deeponet import Residual_Fusion_Wavelet_DeepONet
 from model_fusion_wavelet_deeponet import Fusion_Wavelet_DeepONet
-from model_fs_deeponet import FS_DeepONet
 from model_wien_deeponet import WienDeepONet
 
 class GridAdapter(nn.Module):
@@ -52,7 +51,7 @@ class GridAdapter(nn.Module):
 
 def get_args():
     parser = argparse.ArgumentParser(description="Universal Golden Protocol Training Script")
-    parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'fusion_wavelet_deeponet', 'fs_deeponet', 'fs_lap_deeponet', 'wien_deeponet'])
+    parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'fusion_wavelet_deeponet', 'wien_deeponet'])
     parser.add_argument('--data_path', type=str, default='../data/double_cone_dataset.pt')
     parser.add_argument('--batch_size', type=int, default=9)
     parser.add_argument('--epochs', type=int, default=2500)
@@ -68,41 +67,6 @@ def get_args():
     parser.add_argument('--aux_weight', type=float, default=None, help='wien_deeponet: coefficient loss weight (the whole training loss)')
     parser.add_argument('--wavelet', type=str, default=None, help='wien_deeponet: wavelet basis (haar/db2/db4...)')
     return parser.parse_args()
-
-def build_fs_ctx(y_raw, param_raw, train_idx, x_norm, y_norm):
-    """Stats for FS_DeepONet, computed on the train split only (no leakage).
-
-    y_raw: [S,4,H,W] physical targets with p NOT yet log10-transformed.
-    param_raw: [S,3] raw branch params (dataset order).
-    """
-    fluid = y_raw[train_idx, 3] > 0
-    blk = y_raw[:, :, :, 0:5]
-    m_in = y_raw[:, 3, None, :, 0:5] > 0
-    min3 = m_in[:, 0]                                     # [S, H, 5]
-    fs = torch.stack([(blk[:, 0] * min3).sum((1, 2)) / min3.sum((1, 2)),
-                      (blk[:, 1] * min3).sum((1, 2)) / min3.sum((1, 2)),
-                      (blk[:, 3] * min3).sum((1, 2)) / min3.sum((1, 2))], dim=1)
-    ylog = y_raw.clone()
-    ylog[:, 3] = torch.log10(y_raw[:, 3] + 1e-6)
-    ytr, fstr = ylog[train_idx], fs[train_idx]
-    ftr = fluid
-    lrho = torch.log10((ytr[:, 0] / fstr[:, 0, None, None]).clamp_min(1e-8))[ftr]
-    u_nd = (ytr[:, 1] / fstr[:, 1, None, None])[ftr]
-    v_nd = (ytr[:, 2] / fstr[:, 1, None, None])[ftr]
-    lp = (ytr[:, 3] - torch.log10(fstr[:, 2])[:, None, None])[ftr]
-    t = torch.stack([lrho, u_nd, v_nd, lp])
-    # benchmark y stats from the shared normalizer (log-p space)
-    ymin = y_norm.min.view(-1).cpu()
-    yrange = (y_norm.max - y_norm.min).view(-1).cpu()
-    # normalized param table for exact row matching at train time
-    pmin = x_norm.min.view(-1)[2:].cpu()
-    pmax = x_norm.max.view(-1)[2:].cpu()
-    ptab = (param_raw - pmin) / (pmax - pmin + 1e-6)
-    lg = torch.log10(fs)
-    mu, sd = lg.mean(0), lg.std(0)
-    return {'param_table': ptab, 'log_fs_z': (lg - mu) / sd, 'fs_mu': mu, 'fs_sd': sd,
-            'tmin': t.amin(1), 'tmax': t.amax(1), 'ymin': ymin, 'yrange': yrange}
-
 
 def build_model(model_name, use_fourier, ctx=None):
     npar = (ctx or {}).get('n_param', 3)
@@ -165,15 +129,10 @@ def build_model(model_name, use_fourier, ctx=None):
                                                                                  hidden_dim=259, trunk_hidden=259,
                                                                                  num_outputs=4, depth=5,
                                                                                  basis_size=128, w0=3.0, s0=3.0)
-    # Freestream-normalized DeepONet (lap=True adds the train-param kNN
-    # Laplacian penalty on branch coefficients), ~1.0M params
-    elif model_name in ('fs_deeponet', 'fs_lap_deeponet'):
-        return FS_DeepONet(branch_dim=npar, hidden=300, depth=5, basis_size=128, ctx=ctx,
-                           lap=model_name == 'fs_lap_deeponet')
     # WIEN-INR coefficient-domain port: per-scale coefficient nets chained
     # by upsampled-query context heads, single IDWT output (~0.85M params)
     elif model_name == 'wien_deeponet':
-        return WienDeepONet(branch_dim=npar, ctx=ctx)
+        return WienDeepONet(branch_dim=npar, ctx=ctx, branch_depth=3)
 
 def main():
     args = get_args()
@@ -186,7 +145,7 @@ def main():
     use_fourier = not args.no_fourier
     # Coordinate-based DeepONet variants, wrapped behind the grid image interface
     # so they train with the same curriculum-weighted MSE as grid models
-    coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'fusion_wavelet_deeponet', 'fs_deeponet', 'fs_lap_deeponet'}
+    coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'fusion_wavelet_deeponet'}
     # Coord variants without a Fourier option get no suffix (only hyperdeeponet supports it)
     # Coord variants have no Fourier option: no _fourier suffix in run names
     # (wien_deeponet is grid-native, not a GridAdapter coord model, but
@@ -226,11 +185,6 @@ def main():
         for k in ('levels', 'aux_weight', 'wavelet'):
             if getattr(args, k) is not None:
                 ctx[k] = getattr(args, k)
-    if args.model in ('fs_deeponet', 'fs_lap_deeponet'):
-        data_raw = torch.load(args.data_path, weights_only=False)
-        train_idx, _ = get_split_indices(data_raw['x'].shape[0])
-        ctx = {**ctx, **build_fs_ctx(data_raw['y'].float(), data_raw['x'][:, 2:, 0, 0].float(),
-                                     train_idx, x_norm, y_norm)}
     model = build_model(args.model, use_fourier, ctx).to(device)
     if args.model in coord_models:
         model = GridAdapter(model).to(device)

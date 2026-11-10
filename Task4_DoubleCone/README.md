@@ -16,16 +16,24 @@ Crucially, this directory implements an **Ablation Study** to test the "Cure vs.
 
 ## 📊 Targets, Masking and Metric Space
 
-- Pressure is stored as `log10(p + 1e-6)`: raw `p` spans 79.8 – 3.365e5 (3.63 decades), so a linear
-  container would squeeze the median pressure into 0.18% of `[0, 1]`.
+- Density and pressure are stored as `log10(x + 1e-6)` (channels 0 and 3, `encode_log10` in
+  `data_loader.py`): raw `p` spans 79.8 – 3.365e5 (3.63 decades) and raw `rho` a similar span, so
+  linear containers would squeeze their medians into fractions of a percent of `[0, 1]`.
 - 313 domain-filler cells (body-interior wedge + outflow corners) are exactly zero in every sample.
   The mask must be taken on the **raw** targets: after the log transform those cells read
   `log10(1e-6) = -6`, never `0`, so a mask taken afterwards silently matches nothing.
 - Min/max statistics for the targets are computed on **fluid cells only**, on the train split.
-  Including the vacuum floor would stretch the pressure span from 3.63 to 11.53 and leave real
-  targets occupying just 31% of `[0, 1]`.
-- MAE / MSE / Relative $L_2$ are reported in the normalized `[0, 1]` space (p in `log10`), vacuum
-  cells excluded. They are **not** physical units and are not comparable across Tasks I–III.
+  Including the vacuum floor would stretch the spans into the vacuum decades and leave real
+  targets occupying a small slice of `[0, 1]`.
+- MAE / MSE / Relative $L_2$ are reported in the normalized `[0, 1]` space (rho & p in `log10`),
+  vacuum cells excluded. They are **not** physical units and are not comparable across Tasks I–III.
+  **Metrics from checkpoints trained before 2026-11-11 are not comparable to current ones**: those
+  models consumed a linear-rho target and different normalizer stats.
+- WIEN-DeepONet additionally (a) harmonically fills the vacuum cells of each encoded target before
+  its DWT (pre-factorized Laplace solve, `harmonic_fill` in `wavelet_haar.py`), (b) trains solely on
+  per-band coefficient relative MSE masked to coefficients whose whole filter support is fluid
+  (`support_masks`), and (c) uses symmetric boundary extension in every DWT/IDWT (no circular
+  wrap-around between the two domain ends).
 
 ## 🚀 Quick Start
 

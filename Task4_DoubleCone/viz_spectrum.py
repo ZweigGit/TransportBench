@@ -7,7 +7,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
-from data_loader import get_split_indices, vacuum_mask
+from data_loader import get_split_indices, vacuum_mask, encode_log10, LOG10_CHANNELS
 from train import build_model, GridAdapter
 
 CHANNELS = ['Density rho', 'Velocity u', 'Velocity v', 'Pressure p']
@@ -34,10 +34,11 @@ def load_model(run_name, device):
 
 
 def predict_phys(model, x_in, x_norm, y_norm):
-    """Encoded grid in -> physical [4, H, W] (pressure channel back from log10)."""
+    """Encoded grid in -> physical [4, H, W] (log10 channels back from log10)."""
     with torch.no_grad():
         pred = y_norm.decode(model(x_norm.encode(x_in)))
-    pred[:, 3] = 10 ** pred[:, 3]
+    for c in LOG10_CHANNELS:
+        pred[:, c] = 10 ** pred[:, c]
     return pred.squeeze(0).cpu().numpy()
 
 
@@ -73,8 +74,7 @@ def main():
 
     # Same seeded split / train-only stats as train.py & eval.py
     train_idx, test_idx = get_split_indices(x_data.shape[0])
-    y_log = y_data.clone()
-    y_log[:, 3] = torch.log10(y_data[:, 3] + 1e-6)
+    y_log = encode_log10(y_data)
     from data_loader import MinMaxNormalizer, param_stats, fluid_stats
     x_min, x_max = param_stats(x_data[train_idx])
     y_min, y_max = fluid_stats(y_log[train_idx], torch.from_numpy(valid))

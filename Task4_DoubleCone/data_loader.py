@@ -73,6 +73,20 @@ def fluid_stats(y_train, fluid_mask):
     return sel.amin(dim=(0, 2)).view(1, -1, 1, 1), sel.amax(dim=(0, 2)).view(1, -1, 1, 1)
 
 
+# Channels stored (and normalized) in log10 space, with the vacuum floor
+# used before the transform. eval.py / viz_spectrum.py must apply the same
+# encoding and invert with 10** on exactly these channels.
+LOG10_CHANNELS = (0, 3)
+
+
+def encode_log10(y):
+    """log10 on the LOG10_CHANNELS of raw physical targets (out-of-place)."""
+    y = y.clone()
+    for c in LOG10_CHANNELS:
+        y[:, c] = torch.log10(y[:, c] + 1e-6)
+    return y
+
+
 def param_stats(x_train):
     """Per-channel min/max [1, C, 1, 1] for the input image (dense field, no mask)."""
     return (torch.amin(x_train, dim=(0, 2, 3), keepdim=True),
@@ -126,8 +140,8 @@ def get_dataloader_and_stats(data_path, batch_size, device, consolidate=False):
     # log10(1e-6) = -6 once transformed (see vacuum_mask docstring).
     vac = vacuum_mask(y_data)
 
-    print("Applying Standard Log10-transform to Pressure channel (Index 3)...")
-    y_data[:, 3, :, :] = torch.log10(y_data[:, 3, :, :] + 1e-6)
+    print("Applying Standard Log10-transform to Density (Index 0) and Pressure (Index 3)...")
+    y_data = encode_log10(y_data)
 
     n_total = x_data.shape[0]
     train_idx, test_idx = get_split_indices(n_total)
