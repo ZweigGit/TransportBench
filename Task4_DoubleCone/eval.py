@@ -10,7 +10,7 @@ from train import build_model, GridAdapter  # single source of model configs, ke
 def get_args():
     parser = argparse.ArgumentParser(description="Evaluation for Task 4: Double Cone Flow")
     parser.add_argument('--model', type=str, required=True,
-                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'fs_deeponet', 'fs_lap_deeponet'],
+                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'fs_deeponet', 'fs_lap_deeponet', 'wien_deeponet'],
                         help='Choose the model to evaluate')
     parser.add_argument('--no_fourier', action='store_true',
                         help='Model does not use Fourier encoding')
@@ -33,7 +33,8 @@ def main():
     # Coordinate-based DeepONet variants, wrapped behind the grid image interface
     coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'fs_deeponet', 'fs_lap_deeponet'}
     # Coord variants have no Fourier option: no _fourier suffix in run names
-    fourierless = coord_models
+    # (wien_deeponet is grid-native with no Fourier option either)
+    fourierless = coord_models | {'wien_deeponet'}
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     run_name = args.model + ('' if args.model in fourierless else fourier_suffix)
@@ -84,7 +85,10 @@ def main():
     checkpoint_fourier = cfg.get('use_fourier', use_fourier) and args.model not in fourierless
     
     model = build_model(args.model, checkpoint_fourier,
-                         ctx={'n_param': cfg.get('n_param', 3)}).to(device)
+                         ctx={'n_param': cfg.get('n_param', 3),
+                              # wien_deeponet sweepable overrides ride in the ckpt
+                              **{k: cfg[k] for k in ('levels', 'aux_weight', 'wavelet')
+                                 if k in cfg}}).to(device)
     if args.model in coord_models:
         model = GridAdapter(model).to(device)
     state = checkpoint.get('model_state', checkpoint)

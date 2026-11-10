@@ -27,6 +27,7 @@ from model_wavelet_deeponet import WaveletDeepONet
 from model_residual_fusion_wavelet_deeponet import Residual_Fusion_Wavelet_DeepONet
 from model_fusion_wavelet_deeponet import Fusion_Wavelet_DeepONet
 from model_fs_deeponet import FS_DeepONet
+from model_wien_deeponet import WienDeepONet
 
 class GridAdapter(nn.Module):
     """Grid [B,5,H,W] interface for (branch, trunk) coordinate DeepONet variants:
@@ -51,7 +52,7 @@ class GridAdapter(nn.Module):
 
 def get_args():
     parser = argparse.ArgumentParser(description="Universal Golden Protocol Training Script")
-    parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'fusion_wavelet_deeponet', 'fs_deeponet', 'fs_lap_deeponet'])
+    parser.add_argument('--model', type=str, required=True, choices=['ae', 'deeponet', 'fno', 'pt', 'unet', 'vit', 'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'fusion_wavelet_deeponet', 'fs_deeponet', 'fs_lap_deeponet', 'wien_deeponet'])
     parser.add_argument('--data_path', type=str, default='../data/double_cone_dataset.pt')
     parser.add_argument('--batch_size', type=int, default=9)
     parser.add_argument('--epochs', type=int, default=2500)
@@ -63,6 +64,9 @@ def get_args():
                         help='Replace duplicate-param train labels by group mean')
     parser.add_argument('--best_after', type=int, default=1000,
                         help='Start tracking/saving the best checkpoint after this epoch')
+    parser.add_argument('--levels', type=int, default=None, help='wien_deeponet: wavelet levels J')
+    parser.add_argument('--aux_weight', type=float, default=None, help='wien_deeponet: coefficient loss weight (the whole training loss)')
+    parser.add_argument('--wavelet', type=str, default=None, help='wien_deeponet: wavelet basis (haar/db2/db4...)')
     return parser.parse_args()
 
 def build_fs_ctx(y_raw, param_raw, train_idx, x_norm, y_norm):
@@ -166,6 +170,10 @@ def build_model(model_name, use_fourier, ctx=None):
     elif model_name in ('fs_deeponet', 'fs_lap_deeponet'):
         return FS_DeepONet(branch_dim=npar, hidden=300, depth=5, basis_size=128, ctx=ctx,
                            lap=model_name == 'fs_lap_deeponet')
+    # WIEN-INR coefficient-domain port: per-scale coefficient nets chained
+    # by upsampled-query context heads, single IDWT output (~0.85M params)
+    elif model_name == 'wien_deeponet':
+        return WienDeepONet(branch_dim=npar, ctx=ctx)
 
 def main():
     args = get_args()
@@ -181,7 +189,9 @@ def main():
     coord_models = {'hyperdeeponet', 'mscale_deeponet', 'hyper_mscale_deeponet', 'c_hyperdeeponet', 'c_hyper_mscale_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'mr_deeponet', 'wavelet_deeponet', 'mwavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'fusion_wavelet_deeponet', 'fs_deeponet', 'fs_lap_deeponet'}
     # Coord variants without a Fourier option get no suffix (only hyperdeeponet supports it)
     # Coord variants have no Fourier option: no _fourier suffix in run names
-    fourierless = coord_models
+    # (wien_deeponet is grid-native, not a GridAdapter coord model, but
+    # also has no Fourier option)
+    fourierless = coord_models | {'wien_deeponet'}
     fourier_suffix = "" if args.model in fourierless else ("_fourier" if use_fourier else "_nofourier")
 
     # Per-model output subdirectory, aligned with Task I convention
@@ -206,9 +216,16 @@ def main():
     vac = vac.to(device)
 
     ctx = None
-    if args.model in coord_models | {'deeponet', 'ae', 'fno', 'pt', 'unet', 'vit'}:
+    if args.model in coord_models | {'deeponet', 'ae', 'fno', 'pt', 'unet', 'vit', 'wien_deeponet'}:
         # parameter channels follow the dataset (coords + N params)
         ctx = {'n_param': train_loader.dataset.tensors[0].shape[1] - 2}
+    if args.model == 'wien_deeponet':
+        # vacuum mask feeds the per-scale coefficient support weights;
+        # sweepable overrides travel through ctx and into the ckpt config
+        ctx['vac'] = vac
+        for k in ('levels', 'aux_weight', 'wavelet'):
+            if getattr(args, k) is not None:
+                ctx[k] = getattr(args, k)
     if args.model in ('fs_deeponet', 'fs_lap_deeponet'):
         data_raw = torch.load(args.data_path, weights_only=False)
         train_idx, _ = get_split_indices(data_raw['x'].shape[0])
@@ -252,20 +269,28 @@ def main():
             y_enc = y_norm.encode(y)
 
             optimizer.zero_grad()
-            out_enc = model(x_enc)
+            # target-conditioned models (wien_deeponet) take y for coefficient
+            # supervision; the prediction chain itself never sees it
+            out_enc = model(x_enc, y_enc) if getattr(model, 'uses_target', False) else model(x_enc)
 
-            # MSE loss weight matrix (paper Eq. 14) with spatial curriculum
-            raw_loss = loss_fn(out_enc, y_enc)
-            w = torch.ones_like(raw_loss)
-            w[:, :, 2, :] = w_wall      # Wall
-            w[:, :, 1, :] = w_near      # Near-wall
-            w[:, :, 3, :] = w_near      # Near-wall
-            w[:, 3, :, :] *= w_p        # Pressure channel augmentation
-            w[:, :, vac] = 0.0          # Vacuum filler cells are not targets
+            if getattr(model, 'coef_loss_only', False):
+                # wien_deeponet: training loss is predicted-vs-target wavelet
+                # coefficients only; the field output exists for eval and
+                # model selection, not for the loss
+                loss = model.aux_loss
+            else:
+                # MSE loss weight matrix (paper Eq. 14) with spatial curriculum
+                raw_loss = loss_fn(out_enc, y_enc)
+                w = torch.ones_like(raw_loss)
+                w[:, :, 2, :] = w_wall      # Wall
+                w[:, :, 1, :] = w_near      # Near-wall
+                w[:, :, 3, :] = w_near      # Near-wall
+                w[:, 3, :, :] *= w_p        # Pressure channel augmentation
+                w[:, :, vac] = 0.0          # Vacuum filler cells are not targets
 
-            loss = (raw_loss * w).sum() / w.sum()
-            if getattr(model, 'aux_loss', None) is not None:
-                loss = loss + model.aux_loss
+                loss = (raw_loss * w).sum() / w.sum()
+                if getattr(model, 'aux_loss', None) is not None:
+                    loss = loss + model.aux_loss
             inner = getattr(model, 'm', model)
             if getattr(inner, 'lap', False):
                 loss = loss + inner.lap_weight * inner.graph_lap_loss()
@@ -313,7 +338,9 @@ def main():
             torch.save({
                 'model_state': model.state_dict(),
                 'config': {'use_fourier': use_fourier,
-                           'n_param': (ctx or {}).get('n_param', 3)},
+                           'n_param': (ctx or {}).get('n_param', 3),
+                           **{k: ctx[k] for k in ('levels', 'aux_weight', 'wavelet')
+                              if k in (ctx or {})}},
                 'epoch': ep,
                 'best_test_loss': best_test_loss
             }, save_path)
