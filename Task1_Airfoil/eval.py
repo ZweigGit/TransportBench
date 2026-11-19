@@ -23,12 +23,13 @@ from model_residual_fusion_deeponet import Residual_Fusion_DeepONet
 from model_wavelet_deeponet import WaveletDeepONet
 from model_residual_fusion_wavelet_deeponet import Residual_Fusion_Wavelet_DeepONet
 from model_mwavelet_deeponet import MwaveletDeepONet
+from model_wien_deeponet import WIENDeepONet
 from data_loader import AirfoilDataset
 
 def get_args():
     parser = argparse.ArgumentParser(description="Evaluation Script for Task I: Airfoil Flow")
     parser.add_argument('--model', type=str, required=True,
-                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'hyper_wavelet_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'mwavelet_deeponet'],
+                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'hyper_wavelet_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'mwavelet_deeponet', 'wien_deeponet', 'wien_deeponet_gelu', 'wien_deeponet_noc2f'],
                         help='Choose the baseline model to evaluate')
     parser.add_argument('--data_path', type=str, default=None,
                         help='Path to dataset (default: <repo>/data/airfoil_unified_128x128.pt)')
@@ -52,6 +53,14 @@ def main():
     if args.output_dir is None:
         args.output_dir = os.path.join('output', args.model)
     os.makedirs(args.output_dir, exist_ok=True)
+
+    # Resolve the checkpoint path early: the wien_deeponet constructor needs
+    # to peek at it (use_c2f is inferred from the saved trunk shapes)
+    if args.checkpoint is None:
+        args.checkpoint = os.path.join('output', args.model, 'best_model.pth')
+    ckpt_path = args.checkpoint
+    if not os.path.exists(ckpt_path):
+        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
 
     # 1. Load test dataset
     data_mode = 'fno' if args.model in ['fno', 'unet', 'vit', 'ae'] else 'deeponet'
@@ -121,15 +130,27 @@ def main():
         model = MwaveletDeepONet(branch_dim=674, trunk_dim=2, branch_hidden=256,
                                  trunk_hidden=198, branch_depth=4, trunk_depth=4,
                                  basis_size=128, s0=1.0, w0s=[0.0, 5.0, 10.0, 15.0])
+    elif args.model == 'wien_deeponet':
+        # v2: 1,002,851 params. train.py flips this model between the full
+        # c2f cascade and the noc2f ablation, so infer use_c2f from the
+        # checkpoint: trunk-1 first layer in_features is 2 (coords only) vs 6
+        # (coords + low-freq coefficients).
+        probe = torch.load(ckpt_path, map_location='cpu')
+        use_c2f = probe['trunks.1.net.0.linear.weight'].shape[1] != 2
+        print(f"Inferred use_c2f={use_c2f} from {ckpt_path}")
+        model = WIENDeepONet(branch_dim=674, basis=32, trunk_widths=(35, 59, 151, 352),
+                             trunk_layers=4, use_c2f=use_c2f)
+        del probe
+    elif args.model == 'wien_deeponet_gelu':
+        model = WIENDeepONet(branch_dim=674, basis=32, trunk_widths=(35, 59, 151, 352),
+                             trunk_layers=4, activation='gelu')
+    elif args.model == 'wien_deeponet_noc2f':
+        model = WIENDeepONet(branch_dim=674, basis=32, trunk_widths=(35, 59, 151, 352),
+                             trunk_layers=4, use_c2f=False)
 
     model = model.to(device)
     
     # 3. Load model weights
-    if args.checkpoint is None:
-        args.checkpoint = os.path.join('output', args.model, 'best_model.pth')
-    ckpt_path = args.checkpoint
-    if not os.path.exists(ckpt_path):
-        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
     model.load_state_dict(torch.load(ckpt_path, map_location=device))
     model.eval()
     print(f"Loaded weights from {ckpt_path}")
@@ -164,13 +185,18 @@ def main():
             else:
                 x_branch, x_trunk, y = batch[0].to(device), batch[1].to(device), batch[2].to(device)
                 batch_size = x_branch.shape[0]
-                
-                # Process each sample individually for coordinate-based models
-                pred_list = []
-                for j in range(batch_size):
-                    pred_j = model(x_branch[j:j+1], x_trunk[j])
-                    pred_list.append(pred_j)
-                pred = torch.cat(pred_list, dim=0)
+
+                if args.model.startswith('wien_deeponet'):
+                    # IDWT reconstruction of the predicted coefficients
+                    pred = model.predict_field(x_branch[0:1])       # (1, 4, 128, 128)
+                    pred = pred[0].permute(1, 2, 0).reshape(-1, 4).unsqueeze(0)
+                else:
+                    # Process each sample individually for coordinate-based models
+                    pred_list = []
+                    for j in range(batch_size):
+                        pred_j = model(x_branch[j:j+1], x_trunk[j])
+                        pred_list.append(pred_j)
+                    pred = torch.cat(pred_list, dim=0)
                 
                 # Get the actual geometry mask for this sample
                 actual_idx = test_indices[i]
