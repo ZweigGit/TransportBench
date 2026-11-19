@@ -54,6 +54,14 @@ def main():
         args.output_dir = os.path.join('output', args.model)
     os.makedirs(args.output_dir, exist_ok=True)
 
+    # Resolve the checkpoint path early: the wien_deeponet constructor needs
+    # to peek at it (use_c2f is inferred from the saved trunk shapes)
+    if args.checkpoint is None:
+        args.checkpoint = os.path.join('output', args.model, 'best_model.pth')
+    ckpt_path = args.checkpoint
+    if not os.path.exists(ckpt_path):
+        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
+
     # 1. Load test dataset
     data_mode = 'fno' if args.model in ['fno', 'unet', 'vit', 'ae'] else 'deeponet'
     dataset = AirfoilDataset(args.data_path, mode=data_mode)
@@ -123,9 +131,16 @@ def main():
                                  trunk_hidden=198, branch_depth=4, trunk_depth=4,
                                  basis_size=128, s0=1.0, w0s=[0.0, 5.0, 10.0, 15.0])
     elif args.model == 'wien_deeponet':
-        # v2: 1,002,851 params; must match the train.py construction exactly
+        # v2: 1,002,851 params. train.py flips this model between the full
+        # c2f cascade and the noc2f ablation, so infer use_c2f from the
+        # checkpoint: trunk-1 first layer in_features is 2 (coords only) vs 6
+        # (coords + low-freq coefficients).
+        probe = torch.load(ckpt_path, map_location='cpu')
+        use_c2f = probe['trunks.1.net.0.linear.weight'].shape[1] != 2
+        print(f"Inferred use_c2f={use_c2f} from {ckpt_path}")
         model = WIENDeepONet(branch_dim=674, basis=32, trunk_widths=(35, 59, 151, 352),
-                             trunk_layers=4)
+                             trunk_layers=4, use_c2f=use_c2f)
+        del probe
     elif args.model == 'wien_deeponet_gelu':
         model = WIENDeepONet(branch_dim=674, basis=32, trunk_widths=(35, 59, 151, 352),
                              trunk_layers=4, activation='gelu')
@@ -136,11 +151,6 @@ def main():
     model = model.to(device)
     
     # 3. Load model weights
-    if args.checkpoint is None:
-        args.checkpoint = os.path.join('output', args.model, 'best_model.pth')
-    ckpt_path = args.checkpoint
-    if not os.path.exists(ckpt_path):
-        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
     model.load_state_dict(torch.load(ckpt_path, map_location=device))
     model.eval()
     print(f"Loaded weights from {ckpt_path}")

@@ -160,7 +160,7 @@ def main():
                                  basis_size=128, s0=2.0, w0s=[0.0, 5.0, 10.0, 15.0])
     elif args.model == 'wien_deeponet':
         model = WIENDeepONet(branch_dim=674, basis=32, trunk_widths=(35, 59, 151, 352),
-                             trunk_layers=4)
+                             trunk_layers=4, use_c2f=False)
 
     model = model.to(device)
     print(f"Model Parameters: {sum(p.numel() * (2 if p.is_complex() else 1) for p in model.parameters()) / 1e6:.2f} M")
