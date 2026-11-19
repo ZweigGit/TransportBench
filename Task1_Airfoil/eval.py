@@ -144,15 +144,24 @@ def main():
                              trunk_layers=4, use_c2f=use_c2f, learnable_omega=has_lw)
         del probe
     elif args.model.startswith('wien_serial'):
-        # Per-scale (branch, trunk) pairs; infer use_c2f from trunk-1 first
-        # layer in_features (2 = coords-only, 6 = coords + low-freq coeffs)
-        # and learnable_omega from the presence of log_omega tensors.
+        # Per-scale (branch, trunk) pairs; widths were reworked once
+        # (c07ddc3) without touching this file, so infer the full config
+        # from the checkpoint: trunk_l / branch_l widths from the first
+        # layer weights, use_c2f from trunk-1 first layer in_features
+        # (2 = coords-only, 6 = coords + low-freq coeffs), learnable_omega
+        # from the presence of log_omega tensors.
         probe = torch.load(ckpt_path, map_location='cpu')
+        trunk_widths = tuple(probe[f'trunks.{i}.net.0.linear.weight'].shape[0]
+                             for i in range(4))
+        branch_widths = tuple(probe[f'branch_nets.{i}.0.weight'].shape[0]
+                              for i in range(4))
         use_c2f = probe['trunks.1.net.0.linear.weight'].shape[1] != 2
         has_lw = 'trunks.0.net.0.log_omega' in probe
-        print(f"Inferred use_c2f={use_c2f}, learnable_omega={has_lw} from {ckpt_path}")
+        print(f"Inferred trunk_widths={trunk_widths}, branch_widths={branch_widths}, "
+              f"use_c2f={use_c2f}, learnable_omega={has_lw} from {ckpt_path}")
         model = WIENSerialDeepONet(
-            branch_dim=674, basis=32, trunk_widths=(11, 28, 92, 252),
+            branch_dim=674, basis=32, trunk_widths=trunk_widths,
+            branch_widths=branch_widths,
             trunk_layers=4, use_c2f=use_c2f, learnable_omega=has_lw)
         del probe
     elif args.model == 'wien_deeponet_gelu':
