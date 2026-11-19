@@ -23,12 +23,13 @@ from model_residual_fusion_deeponet import Residual_Fusion_DeepONet
 from model_wavelet_deeponet import WaveletDeepONet
 from model_residual_fusion_wavelet_deeponet import Residual_Fusion_Wavelet_DeepONet
 from model_mwavelet_deeponet import MwaveletDeepONet
+from model_wien_deeponet import WIENDeepONet
 from data_loader import AirfoilDataset
 
 def get_args():
     parser = argparse.ArgumentParser(description="Evaluation Script for Task I: Airfoil Flow")
     parser.add_argument('--model', type=str, required=True,
-                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'hyper_wavelet_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'mwavelet_deeponet'],
+                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'hyper_wavelet_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'mwavelet_deeponet', 'wien_deeponet', 'wien_deeponet_gelu', 'wien_deeponet_noc2f'],
                         help='Choose the baseline model to evaluate')
     parser.add_argument('--data_path', type=str, default=None,
                         help='Path to dataset (default: <repo>/data/airfoil_unified_128x128.pt)')
@@ -121,6 +122,16 @@ def main():
         model = MwaveletDeepONet(branch_dim=674, trunk_dim=2, branch_hidden=256,
                                  trunk_hidden=198, branch_depth=4, trunk_depth=4,
                                  basis_size=128, s0=1.0, w0s=[0.0, 5.0, 10.0, 15.0])
+    elif args.model == 'wien_deeponet':
+        # v2: 1,002,851 params; must match the train.py construction exactly
+        model = WIENDeepONet(branch_dim=674, basis=32, trunk_widths=(35, 59, 151, 352),
+                             trunk_layers=4)
+    elif args.model == 'wien_deeponet_gelu':
+        model = WIENDeepONet(branch_dim=674, basis=32, trunk_widths=(35, 59, 151, 352),
+                             trunk_layers=4, activation='gelu')
+    elif args.model == 'wien_deeponet_noc2f':
+        model = WIENDeepONet(branch_dim=674, basis=32, trunk_widths=(35, 59, 151, 352),
+                             trunk_layers=4, use_c2f=False)
 
     model = model.to(device)
     
@@ -164,13 +175,18 @@ def main():
             else:
                 x_branch, x_trunk, y = batch[0].to(device), batch[1].to(device), batch[2].to(device)
                 batch_size = x_branch.shape[0]
-                
-                # Process each sample individually for coordinate-based models
-                pred_list = []
-                for j in range(batch_size):
-                    pred_j = model(x_branch[j:j+1], x_trunk[j])
-                    pred_list.append(pred_j)
-                pred = torch.cat(pred_list, dim=0)
+
+                if args.model.startswith('wien_deeponet'):
+                    # IDWT reconstruction of the predicted coefficients
+                    pred = model.predict_field(x_branch[0:1])       # (1, 4, 128, 128)
+                    pred = pred[0].permute(1, 2, 0).reshape(-1, 4).unsqueeze(0)
+                else:
+                    # Process each sample individually for coordinate-based models
+                    pred_list = []
+                    for j in range(batch_size):
+                        pred_j = model(x_branch[j:j+1], x_trunk[j])
+                        pred_list.append(pred_j)
+                    pred = torch.cat(pred_list, dim=0)
                 
                 # Get the actual geometry mask for this sample
                 actual_idx = test_indices[i]

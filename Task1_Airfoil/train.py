@@ -3,6 +3,7 @@ import argparse
 import random
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 import numpy as np
 import matplotlib.pyplot as plt
@@ -26,13 +27,14 @@ from model_residual_fusion_deeponet import Residual_Fusion_DeepONet
 from model_wavelet_deeponet import WaveletDeepONet
 from model_residual_fusion_wavelet_deeponet import Residual_Fusion_Wavelet_DeepONet
 from model_mwavelet_deeponet import MwaveletDeepONet
+from model_wien_deeponet import WIENDeepONet, build_or_load_coef_cache
 # Import custom Dataset
 from data_loader import AirfoilDataset
 
 def get_args():
     parser = argparse.ArgumentParser(description="TransportBench - Task I: Airfoil Flow")
     parser.add_argument('--model', type=str, required=True,
-                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'hyper_wavelet_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'mwavelet_deeponet'],
+                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'hyper_wavelet_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'mwavelet_deeponet', 'wien_deeponet', 'wien_deeponet_gelu', 'wien_deeponet_noc2f'],
                         help='Choose the baseline model')
     parser.add_argument('--epochs', type=int, default=2500, help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
@@ -156,9 +158,23 @@ def main():
         model = MwaveletDeepONet(branch_dim=674, trunk_dim=2, branch_hidden=256,
                                  trunk_hidden=198, branch_depth=4, trunk_depth=4,
                                  basis_size=128, s0=2.0, w0s=[0.0, 5.0, 10.0, 15.0])
+    elif args.model == 'wien_deeponet':
+        model = WIENDeepONet(branch_dim=674, basis=32, trunk_widths=(35, 59, 151, 352),
+                             trunk_layers=4)
 
     model = model.to(device)
     print(f"Model Parameters: {sum(p.numel() * (2 if p.is_complex() else 1) for p in model.parameters()) / 1e6:.2f} M")
+
+    # WIEN-DeepONet trains in wavelet-coefficient space: precompute the
+    # harmonic-fill + DWT coefficient targets (train-set normalized) once.
+    # All wien variants share the same cache (identical wavelet protocol).
+    wien_targets = None
+    if args.model.startswith('wien_deeponet'):
+        cache = build_or_load_coef_cache(
+            args.data_path, os.path.join('output', 'wien_deeponet', 'coef_cache.pt'),
+            device=device)
+        model.load_coeff_stats(cache)
+        wien_targets = cache['targets']  # list of (N, P_l, o_l) normalized
 
     # 4. Define optimizer and loss function (Masked L1 or MSE)
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
@@ -183,6 +199,24 @@ def main():
                 pred = model(x)
                 mask = x[:, 0:1, :, :] # Extract geometry mask
                 loss = ((pred - y) ** 2 * mask).sum() / (mask.sum() * 4)  # fluid-only MSE, matches eval
+            elif args.model.startswith('wien_deeponet'):
+                # Coefficient-space MSE against the cached normalized targets;
+                # chunked forward/backward (grad accumulation) to bound memory
+                batch_indices, x_branch = batch[0], batch[1].to(device)
+                orig = torch.tensor([train_data.indices[i] for i in batch_indices.tolist()])
+                tgt = [t[orig].to(device) for t in wien_targets]
+                B = x_branch.shape[0]
+                optimizer.zero_grad()
+                loss_val = 0.0
+                for s in range(0, B, 8):
+                    e = min(s + 8, B)
+                    preds = model(x_branch[s:e])
+                    loss = sum(F.mse_loss(preds[l], tgt[l][s:e]) for l in range(4)) / 4.0
+                    (loss * (e - s) / B).backward()
+                    loss_val += loss.item() * (e - s) / B
+                optimizer.step()
+                train_loss_acc += loss_val
+                continue  # backward/step/accumulate already done above
             else:
                 # Coordinate-based models (DeepONet, PT)
                 batch_indices, x_branch, x_trunk, y = batch
@@ -226,6 +260,20 @@ def main():
                     pred = model(x)
                     mask = x[:, 0:1, :, :]
                     loss = ((pred - y) ** 2 * mask).sum() / (mask.sum() * 4)  # fluid-only MSE, matches eval
+                elif args.model.startswith('wien_deeponet'):
+                    # Checkpoint selection metric: reconstructed-field fluid-only
+                    # MSE (same protocol as every other model)
+                    batch_indices, x_branch, x_trunk, y = batch
+                    x_branch, y = x_branch.to(device), y.to(device)
+                    B = x_branch.shape[0]
+                    pred = model.predict_field(x_branch)  # (B, 4, 128, 128)
+                    pred = pred.permute(0, 2, 3, 1).reshape(B, -1, 4)
+                    masks = []
+                    for i in range(B):
+                        orig_idx = test_data.indices[batch_indices[i].item()]
+                        masks.append(mask_source.geo_mask[orig_idx].reshape(-1, 1))
+                    mask = torch.stack(masks, dim=0).to(device)
+                    loss = ((pred - y) ** 2 * mask).sum() / (mask.sum() * 4)
                 else:
                     batch_indices, x_branch, x_trunk, y = batch
                     x_branch = x_branch.to(device)
