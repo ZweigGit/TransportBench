@@ -57,11 +57,11 @@ class WIENSerialDeepONet(nn.Module):
     load_coeff_stats: same semantics as WIENDeepONet.
     """
 
-    def __init__(self, branch_dim=674, basis=32, trunk_widths=(11, 28, 92, 252),
+    def __init__(self, branch_dim=674, basis=32, trunk_widths=(41, 82, 165, 331),
                  trunk_layers=4, wavelet="db4", J=3, mode="symmetric",
                  grid_shapes=LEVEL_SHAPES_128, first_omega=30.0, hidden_omega=30.0,
                  activation="siren", use_c2f=True, learnable_omega=False,
-                 branch_widths=None,
+                 branch_widths=(64, 64, 64, 64),
                  xmin=-2.0, xmax=4.0, ymin=-3.0, ymax=3.0):
         super().__init__()
         assert len(trunk_widths) == J + 1
@@ -88,11 +88,12 @@ class WIENSerialDeepONet(nn.Module):
             for l in range(self.n_levels)
         ])
 
-        # per-level branch sub-networks; SAME hidden width as the level's
-        # trunk (user constraint), so one width ladder drives both. With
-        # widths (11, 28, 92, 252) each (branch_l, trunk_l) pair's parameter
-        # count is a near-exact 4x ladder -- 11.4k / 46.6k / 187.4k / 753.8k
-        # per level (ratios 4.10/4.02/4.02), 999,070 total (fixed omega).
+        # per-level branch sub-networks: UNIFORM hidden width across levels
+        # (branch_widths, default 64 x trunk_layers) so levels 1-3 each cost
+        # 81,420 branch params (L0 slightly less: o=4 output, 64,260); the
+        # trunk widths (41, 82, 165, 331) form an exact 2x ladder whose
+        # PARAMETER count follows the requested ~4x growth
+        # (10.7k / 52.9k / 148.4k / 462.1k). Total 982,567 (fixed omega).
         if branch_widths is None:
             branch_widths = trunk_widths
         self.branch_nets = nn.ModuleList()
@@ -239,12 +240,13 @@ if __name__ == "__main__":
     for l in range(m.n_levels):
         bp = sum(p.numel() for p in m.branch_nets[l].parameters())
         tp = sum(p.numel() for p in m.trunks[l].parameters())
-        per_level.append(bp + tp)
+        per_level.append((bp, tp))
         print(f"level {l}: branch {bp:,} + trunk {tp:,} = {bp + tp:,}")
     total = sum(p.numel() for p in m.parameters())
     print(f"total: {total:,}")
-    assert per_level == [11370, 46588, 187356, 753756], per_level
-    assert total == 999070, total
+    assert per_level == [(64260, 10665), (81420, 52864), (81420, 148389),
+                         (81420, 462129)], per_level
+    assert total == 982567, total
 
     # 2. Forward / predict_field / query_field shapes
     dev = "cuda" if torch.cuda.is_available() else "cpu"
