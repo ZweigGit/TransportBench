@@ -28,13 +28,14 @@ from model_wavelet_deeponet import WaveletDeepONet
 from model_residual_fusion_wavelet_deeponet import Residual_Fusion_Wavelet_DeepONet
 from model_mwavelet_deeponet import MwaveletDeepONet
 from model_wien_deeponet import WIENDeepONet, build_or_load_coef_cache
+from model_wien_serial_deeponet import WIENSerialDeepONet
 # Import custom Dataset
 from data_loader import AirfoilDataset
 
 def get_args():
     parser = argparse.ArgumentParser(description="TransportBench - Task I: Airfoil Flow")
     parser.add_argument('--model', type=str, required=True,
-                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'hyper_wavelet_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'mwavelet_deeponet', 'wien_deeponet', 'wien_deeponet_gelu', 'wien_deeponet_noc2f'],
+                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'hyper_wavelet_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'mwavelet_deeponet', 'wien_deeponet', 'wien_deeponet_gelu', 'wien_deeponet_noc2f', 'wien_serial_deeponet', 'wien_serial_deeponet_noc2f'],
                         help='Choose the baseline model')
     parser.add_argument('--epochs', type=int, default=2500, help='Number of training epochs')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
@@ -161,7 +162,16 @@ def main():
     elif args.model == 'wien_deeponet':
         # noc2f configuration (use_c2f=False) + learnable positive SIREN
         model = WIENDeepONet(branch_dim=674, basis=32, trunk_widths=(35, 59, 151, 352),
-                             trunk_layers=4, use_c2f=False, learnable_omega=True)
+                             trunk_layers=4, use_c2f=False, learnable_omega=False)
+    elif args.model in ('wien_serial_deeponet', 'wien_serial_deeponet_noc2f'):
+        # Per-scale (branch, trunk) pairs with the SAME width per level,
+        # trained stage-by-stage coarse -> fine (stages handled below);
+        # near-exact 4x per-level parameter ladder (11.4k/46.6k/187.4k/753.8k,
+        # 999,086 total), fixed SIREN omegas 30
+        model = WIENSerialDeepONet(
+            branch_dim=674, basis=32, trunk_widths=(11, 28, 92, 252),
+            trunk_layers=4, learnable_omega=False,
+            use_c2f=(args.model == 'wien_serial_deeponet'))
 
     model = model.to(device)
     print(f"Model Parameters: {sum(p.numel() * (2 if p.is_complex() else 1) for p in model.parameters()) / 1e6:.2f} M")
@@ -170,12 +180,17 @@ def main():
     # harmonic-fill + DWT coefficient targets (train-set normalized) once.
     # All wien variants share the same cache (identical wavelet protocol).
     wien_targets = None
-    if args.model.startswith('wien_deeponet'):
+    serial_stages = None
+    if args.model.startswith('wien_deeponet') or args.model.startswith('wien_serial'):
         cache = build_or_load_coef_cache(
             args.data_path, os.path.join('output', 'wien_deeponet', 'coef_cache.pt'),
             device=device)
         model.load_coeff_stats(cache)
         wien_targets = cache['targets']  # list of (N, P_l, o_l) normalized
+    if args.model.startswith('wien_serial'):
+        # Staged coarse -> fine training: stage l trains only (branch_l,
+        # trunk_l); the epoch budget is split evenly across the 4 stages.
+        serial_stages = [args.epochs // 4] * 3 + [args.epochs - 3 * (args.epochs // 4)]
 
     # 4. Define optimizer and loss function (Masked L1 or MSE)
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
@@ -189,6 +204,24 @@ def main():
     print("Training Started...")
     pbar = tqdm(range(args.epochs), desc="Training")
     for epoch in pbar:
+        # --- Staged training for wien_serial_*: switch the active stage at
+        # the stage boundaries (freeze everything but the current pair,
+        # rebuild the optimizer so frozen params leave the Adam state) ---
+        if serial_stages is not None:
+            cum = 0
+            for st, n_ep in enumerate(serial_stages):
+                cum += n_ep
+                if epoch < cum:
+                    if getattr(model, '_active_stage', -1) != st:
+                        model.begin_stage(st)
+                        optimizer = optim.Adam(
+                            (p for p in model.stage_params(st)),
+                            lr=args.lr, weight_decay=1e-4)
+                        model._active_stage = st
+                        print(f"\n[serial] stage {st} starts at epoch {epoch+1} "
+                              f"({n_ep} epochs)")
+                    break
+
         # --- Train Phase ---
         model.train()
         train_loss_acc = 0.0
@@ -200,9 +233,12 @@ def main():
                 pred = model(x)
                 mask = x[:, 0:1, :, :] # Extract geometry mask
                 loss = ((pred - y) ** 2 * mask).sum() / (mask.sum() * 4)  # fluid-only MSE, matches eval
-            elif args.model.startswith('wien_deeponet'):
+            elif args.model.startswith('wien_deeponet') or \
+                    args.model.startswith('wien_serial'):
                 # Coefficient-space MSE against the cached normalized targets;
-                # chunked forward/backward (grad accumulation) to bound memory
+                # chunked forward/backward (grad accumulation) to bound memory.
+                # Serial model: loss on ALL levels (frozen pairs contribute
+                # constants; the active pair gets the gradient).
                 batch_indices, x_branch = batch[0], batch[1].to(device)
                 orig = torch.tensor([train_data.indices[i] for i in batch_indices.tolist()])
                 tgt = [t[orig].to(device) for t in wien_targets]
@@ -261,7 +297,8 @@ def main():
                     pred = model(x)
                     mask = x[:, 0:1, :, :]
                     loss = ((pred - y) ** 2 * mask).sum() / (mask.sum() * 4)  # fluid-only MSE, matches eval
-                elif args.model.startswith('wien_deeponet'):
+                elif args.model.startswith('wien_deeponet') or \
+                        args.model.startswith('wien_serial'):
                     # Checkpoint selection metric: reconstructed-field fluid-only
                     # MSE (same protocol as every other model)
                     batch_indices, x_branch, x_trunk, y = batch

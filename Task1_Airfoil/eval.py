@@ -24,12 +24,13 @@ from model_wavelet_deeponet import WaveletDeepONet
 from model_residual_fusion_wavelet_deeponet import Residual_Fusion_Wavelet_DeepONet
 from model_mwavelet_deeponet import MwaveletDeepONet
 from model_wien_deeponet import WIENDeepONet
+from model_wien_serial_deeponet import WIENSerialDeepONet
 from data_loader import AirfoilDataset
 
 def get_args():
     parser = argparse.ArgumentParser(description="Evaluation Script for Task I: Airfoil Flow")
     parser.add_argument('--model', type=str, required=True,
-                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'hyper_wavelet_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'mwavelet_deeponet', 'wien_deeponet', 'wien_deeponet_gelu', 'wien_deeponet_noc2f'],
+                        choices=['deeponet', 'fno', 'unet', 'vit', 'ae', 'pt', 'mscale_deeponet', 'hyperdeeponet', 'c_hyperdeeponet', 'hyper_mscale_deeponet', 'hyper_wavelet_deeponet', 'fusion_deeponet', 'residual_fusion_deeponet', 'wavelet_deeponet', 'residual_fusion_wavelet_deeponet', 'mwavelet_deeponet', 'wien_deeponet', 'wien_deeponet_gelu', 'wien_deeponet_noc2f', 'wien_serial_deeponet', 'wien_serial_deeponet_noc2f'],
                         help='Choose the baseline model to evaluate')
     parser.add_argument('--data_path', type=str, default=None,
                         help='Path to dataset (default: <repo>/data/airfoil_unified_128x128.pt)')
@@ -142,6 +143,18 @@ def main():
         model = WIENDeepONet(branch_dim=674, basis=32, trunk_widths=(35, 59, 151, 352),
                              trunk_layers=4, use_c2f=use_c2f, learnable_omega=has_lw)
         del probe
+    elif args.model.startswith('wien_serial'):
+        # Per-scale (branch, trunk) pairs; infer use_c2f from trunk-1 first
+        # layer in_features (2 = coords-only, 6 = coords + low-freq coeffs)
+        # and learnable_omega from the presence of log_omega tensors.
+        probe = torch.load(ckpt_path, map_location='cpu')
+        use_c2f = probe['trunks.1.net.0.linear.weight'].shape[1] != 2
+        has_lw = 'trunks.0.net.0.log_omega' in probe
+        print(f"Inferred use_c2f={use_c2f}, learnable_omega={has_lw} from {ckpt_path}")
+        model = WIENSerialDeepONet(
+            branch_dim=674, basis=32, trunk_widths=(11, 28, 92, 252),
+            trunk_layers=4, use_c2f=use_c2f, learnable_omega=has_lw)
+        del probe
     elif args.model == 'wien_deeponet_gelu':
         model = WIENDeepONet(branch_dim=674, basis=32, trunk_widths=(35, 59, 151, 352),
                              trunk_layers=4, activation='gelu')
@@ -187,7 +200,8 @@ def main():
                 x_branch, x_trunk, y = batch[0].to(device), batch[1].to(device), batch[2].to(device)
                 batch_size = x_branch.shape[0]
 
-                if args.model.startswith('wien_deeponet'):
+                if args.model.startswith('wien_deeponet') or \
+                        args.model.startswith('wien_serial'):
                     # IDWT reconstruction of the predicted coefficients
                     pred = model.predict_field(x_branch[0:1])       # (1, 4, 128, 128)
                     pred = pred[0].permute(1, 2, 0).reshape(-1, 4).unsqueeze(0)
