@@ -159,8 +159,9 @@ def main():
                                  trunk_hidden=198, branch_depth=4, trunk_depth=4,
                                  basis_size=128, s0=2.0, w0s=[0.0, 5.0, 10.0, 15.0])
     elif args.model == 'wien_deeponet':
+        # noc2f configuration (use_c2f=False) + learnable positive SIREN
         model = WIENDeepONet(branch_dim=674, basis=32, trunk_widths=(35, 59, 151, 352),
-                             trunk_layers=4, use_c2f=False)
+                             trunk_layers=4, use_c2f=False, learnable_omega=True)
 
     model = model.to(device)
     print(f"Model Parameters: {sum(p.numel() * (2 if p.is_complex() else 1) for p in model.parameters()) / 1e6:.2f} M")

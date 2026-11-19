@@ -137,9 +137,10 @@ def main():
         # (coords + low-freq coefficients).
         probe = torch.load(ckpt_path, map_location='cpu')
         use_c2f = probe['trunks.1.net.0.linear.weight'].shape[1] != 2
-        print(f"Inferred use_c2f={use_c2f} from {ckpt_path}")
+        has_lw = 'trunks.0.net.0.log_omega' in probe
+        print(f"Inferred use_c2f={use_c2f}, learnable_omega={has_lw} from {ckpt_path}")
         model = WIENDeepONet(branch_dim=674, basis=32, trunk_widths=(35, 59, 151, 352),
-                             trunk_layers=4, use_c2f=use_c2f)
+                             trunk_layers=4, use_c2f=use_c2f, learnable_omega=has_lw)
         del probe
     elif args.model == 'wien_deeponet_gelu':
         model = WIENDeepONet(branch_dim=674, basis=32, trunk_widths=(35, 59, 151, 352),

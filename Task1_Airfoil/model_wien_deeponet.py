@@ -28,7 +28,8 @@ frequencies (protocol validated in wavelet_decompose_reconstruct.ipynb).
 Parameter budget ~1M (v2, shared branch latent): trunk widths (35, 59, 151,
 352) coarse->fine give a ~4x parameter ladder (8493 / 34073 / 129489 /
 513600) at equal depth (4 SineLayers + linear output); one shared branch
-latent [674,192,192,192,192,396]; total 1,002,851.
+latent [674,192,192,192,192,396]; total 1,002,851. Every SineLayer omega is
+a learnable positive scalar exp(log_omega) initialized at 30.0.
 """
 
 import math
@@ -54,19 +55,27 @@ def get_mgrid(shape):
 
 
 class SineLayer(nn.Module):
-    """SIREN layer with the original initialization scheme (fixed omega).
+    """SIREN layer with the original initialization scheme.
 
     is_first: U(-1/in, 1/in); otherwise U(-sqrt(6/in)/w0, sqrt(6/in)/w0) so
     activations stay bounded while gradients to the weights are boosted.
 
-    Note: a learnable-omega variant (exp(log_omega) per layer, init 30.0)
-    was tried and TRAINING DIVERGED at epoch ~575 (omega growth amplifies
-    the sin gradient, a positive feedback loop); reverted to fixed omega.
+    learnable_omega: omega is a positive learnable scalar exp(log_omega)
+    initialized at omega_0 (weight bounds still use the initial value, as in
+    the trainable-omega Gabor layers of the WIEN source code). NOTE: on the
+    full c2f model this variant DIVERGED at epoch ~575 on the local run,
+    while the noc2f ablation under the same protocol did not -- pointing at
+    the coarse-to-fine cascade (cross-level gradient path), not at omega
+    itself, so learnable omega is kept as the default knob.
     """
 
-    def __init__(self, in_features, out_features, is_first=False, omega_0=30.0):
+    def __init__(self, in_features, out_features, is_first=False, omega_0=30.0,
+                 learnable_omega=False):
         super().__init__()
+        self.learnable_omega = learnable_omega
         self.omega_0 = omega_0
+        if learnable_omega:
+            self.log_omega = nn.Parameter(torch.tensor(math.log(omega_0)))
         self.linear = nn.Linear(in_features, out_features, bias=True)
         with torch.no_grad():
             if is_first:
@@ -76,7 +85,8 @@ class SineLayer(nn.Module):
                 self.linear.weight.uniform_(-bound, bound)
 
     def forward(self, x):
-        return torch.sin(self.omega_0 * self.linear(x))
+        omega = torch.exp(self.log_omega) if self.learnable_omega else self.omega_0
+        return torch.sin(omega * self.linear(x))
 
 
 class LevelTrunk(nn.Module):
@@ -85,7 +95,8 @@ class LevelTrunk(nn.Module):
     PyTorch-default init. Both variants have identical parameter counts."""
 
     def __init__(self, in_features, out_features, hidden_features, hidden_layers,
-                 first_omega=30.0, hidden_omega=30.0, activation="siren"):
+                 first_omega=30.0, hidden_omega=30.0, activation="siren",
+                 learnable_omega=False):
         super().__init__()
         if activation == "gelu":
             dims = [in_features] + [hidden_features] * hidden_layers + [out_features]
@@ -96,10 +107,12 @@ class LevelTrunk(nn.Module):
             layers.append(nn.Linear(dims[-2], dims[-1]))
         else:
             layers = [SineLayer(in_features, hidden_features, is_first=True,
-                                omega_0=first_omega)]
+                                omega_0=first_omega,
+                                learnable_omega=learnable_omega)]
             for _ in range(hidden_layers - 1):
                 layers.append(SineLayer(hidden_features, hidden_features,
-                                        is_first=False, omega_0=hidden_omega))
+                                        is_first=False, omega_0=hidden_omega,
+                                        learnable_omega=learnable_omega))
             final = nn.Linear(hidden_features, out_features)
             with torch.no_grad():
                 bound = math.sqrt(6.0 / hidden_features) / hidden_omega
@@ -139,7 +152,7 @@ class WIENDeepONet(nn.Module):
                  trunk_layers=4, wavelet="db4", J=3, mode="symmetric",
                  grid_shapes=LEVEL_SHAPES_128, first_omega=30.0, hidden_omega=30.0,
                  branch_hidden=192, branch_layers=4, activation="siren", use_c2f=True,
-                 xmin=-2.0, xmax=4.0, ymin=-3.0, ymax=3.0):
+                 learnable_omega=False, xmin=-2.0, xmax=4.0, ymin=-3.0, ymax=3.0):
         super().__init__()
         assert len(trunk_widths) == J + 1
         self.J = J
@@ -163,7 +176,8 @@ class WIENDeepONet(nn.Module):
         self.use_c2f = use_c2f
         self.trunks = nn.ModuleList([
             LevelTrunk(in_dims[l], self.out_dims[l] * basis, trunk_widths[l],
-                       trunk_layers, first_omega, hidden_omega, activation)
+                       trunk_layers, first_omega, hidden_omega, activation,
+                       learnable_omega=learnable_omega)
             for l in range(self.n_levels)
         ])
 
@@ -504,7 +518,21 @@ if __name__ == "__main__":
         torch.tensor([[-1., -1.], [1., 1.]], device=dev), atol=1e-6)
     print("query_field matches grid_sample reference:", tuple(q.shape))
 
-    # 7. Ablation variants: GELU trunks (identical param count), no-c2f
+    # 7. Learnable omega: positive, initialized at 30, gets gradients
+    m_lw = WIENDeepONet(learnable_omega=True).to(dev)
+    omegas = [torch.exp(l.log_omega) for t in m_lw.trunks
+              for l in t.net if isinstance(l, SineLayer)]
+    assert len(omegas) == 16 and all(abs(o.item() - 30.0) < 1e-5 for o in omegas)
+    ps = m_lw(xb)
+    loss = sum(F.mse_loss(ps[l], torch.randn_like(ps[l])) for l in range(4)) / 4.0
+    loss.backward()
+    gnorms = [l.log_omega.grad.abs().item() for t in m_lw.trunks
+              for l in t.net if isinstance(l, SineLayer)]
+    assert all(g > 0 for g in gnorms), gnorms
+    print(f"learnable omega: 16 params, init 30.0, grads ok "
+          f"(range {min(gnorms):.2e}..{max(gnorms):.2e})")
+
+    # 8. Ablation variants: GELU trunks (identical param count), no-c2f
     m_gelu = WIENDeepONet(activation="gelu")
     tp = [sum(p.numel() for p in t.parameters()) for t in m_gelu.trunks]
     total_gelu = sum(tp) + sum(p.numel() for p in m_gelu.branch_net.parameters())
