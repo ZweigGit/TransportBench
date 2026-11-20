@@ -453,7 +453,11 @@ if __name__ == "__main__":
     assert trunk_p == [8493, 34073, 129489, 513600]
     assert branch_p == 317196 and sum(trunk_p) + branch_p == 1002851
 
-    # 2. Harmonic fill + DWT/IDWT round-trip on a synthetic case
+    # 2. Harmonic fill + DWT/IDWT round-trip on a synthetic case.
+    # TF32 conv (cudnn default on Ampere/Ada) only round-trips to ~6e-4;
+    # drop to true fp32 so the 1e-5 PR assertion below tests DWT exactness,
+    # not the GPU's reduced-precision mode.
+    torch.backends.cudnn.allow_tf32 = False
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     f = torch.randn(2, 4, 128, 128, device=dev)
     fluid = torch.ones(2, 1, 128, 128, dtype=torch.bool, device=dev)
