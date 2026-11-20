@@ -160,9 +160,10 @@ def main():
                                  trunk_hidden=198, branch_depth=4, trunk_depth=4,
                                  basis_size=128, s0=2.0, w0s=[0.0, 5.0, 10.0, 15.0])
     elif args.model == 'wien_deeponet':
-        # noc2f configuration (use_c2f=False) + learnable positive SIREN
+        # noc2f configuration (use_c2f=False) + fixed SIREN omegas;
         model = WIENDeepONet(branch_dim=674, basis=32, trunk_widths=(35, 59, 151, 352),
-                             trunk_layers=4, use_c2f=False, learnable_omega=False)
+                             trunk_layers=4, use_c2f=False, learnable_omega=False,
+                             curriculum=True)
     elif args.model in ('wien_serial_deeponet', 'wien_serial_deeponet_noc2f'):
         # Per-scale (branch, trunk) pairs trained stage-by-stage coarse ->
         # fine; branch hidden 64x4 UNIFORM across levels, trunk widths
@@ -249,7 +250,8 @@ def main():
                 for s in range(0, B, 8):
                     e = min(s + 8, B)
                     preds = model(x_branch[s:e])
-                    loss = sum(F.mse_loss(preds[l], tgt[l][s:e]) for l in range(4)) / 4.0
+                    loss = model.level_loss(preds, [t[s:e] for t in tgt],
+                                            progress=epoch / max(1, args.epochs - 1))
                     (loss * (e - s) / B).backward()
                     loss_val += loss.item() * (e - s) / B
                 optimizer.step()

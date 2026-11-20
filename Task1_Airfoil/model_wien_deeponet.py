@@ -152,13 +152,19 @@ class WIENDeepONet(nn.Module):
                  trunk_layers=4, wavelet="db4", J=3, mode="symmetric",
                  grid_shapes=LEVEL_SHAPES_128, first_omega=30.0, hidden_omega=30.0,
                  branch_hidden=192, branch_layers=4, activation="siren", use_c2f=True,
-                 learnable_omega=False, xmin=-2.0, xmax=4.0, ymin=-3.0, ymax=3.0):
+                 learnable_omega=False, curriculum=False, curriculum_r_max=4.0,
+                 xmin=-2.0, xmax=4.0, ymin=-3.0, ymax=3.0):
         super().__init__()
         assert len(trunk_widths) == J + 1
         self.J = J
         self.n_levels = J + 1
         self.basis = basis
         self.out_dims = OUT_DIMS  # fixed by C=4 and 3 DWT subbands
+        # Curriculum (optional): per-level coefficient-loss weights glide
+        # from coarse-heavy (w_l ~ r^(3-l), r = curriculum_r_max) at
+        # progress=0 to uniform at progress=1; see level_loss().
+        self.curriculum = curriculum
+        self.curriculum_r_max = curriculum_r_max
         self.wavelet_cfg = dict(wave=wavelet, J=J, mode=mode)
         self.grid_shapes = tuple(tuple(s) for s in grid_shapes)
 
@@ -268,6 +274,29 @@ class WIENDeepONet(nn.Module):
             preds_own[l] = new_coarse[0]
             coarse = new_coarse
         return preds_own
+
+    def level_loss(self, preds, targets, progress=1.0):
+        """Weighted MSE over the per-level normalized coefficients.
+
+        preds/targets: lists of (B, P_l, o_l) tensors. With curriculum
+        enabled the weights follow a symmetric coarse-to-fine evolution:
+        w_l ~ r^(3-l) where the ratio r glides exponentially from
+        curriculum_r_max (coarse-heavy) at progress=0, through 1 (uniform)
+        at progress=0.5, down to 1/curriculum_r_max (fine-heavy: the
+        coarse/fine weighting is fully swapped) at progress=1. Without
+        curriculum, uniform 1/L. Always normalized to sum 1.
+        """
+        L = self.n_levels
+        if self.curriculum:
+            p = min(max(float(progress), 0.0), 1.0)
+            # r: R_max -> 1 -> 1/R_max (log-linear in p, symmetric about 0.5)
+            r = self.curriculum_r_max ** (1.0 - 2.0 * p)
+            w = torch.tensor([r ** (3 - l) for l in range(L)],
+                             device=preds[0].device)
+            w = w / w.sum()
+        else:
+            w = torch.full((L,), 1.0 / L, device=preds[0].device)
+        return sum(w[l] * F.mse_loss(preds[l], targets[l]) for l in range(L))
 
     def _denorm(self, pred, l):
         o = self.out_dims[l]
@@ -535,6 +564,25 @@ if __name__ == "__main__":
     assert all(g > 0 for g in gnorms), gnorms
     print(f"learnable omega: 16 params, init 30.0, grads ok "
           f"(range {min(gnorms):.2e}..{max(gnorms):.2e})")
+
+    # 7b. Curriculum level_loss: symmetric coarse->fine evolution; p=0.5
+    # uniform, p=1 is the exact mirror of p=0 (coarse/fine swapped)
+    m_cur = WIENDeepONet(curriculum=True)
+    tgts = [torch.randn_like(p) for p in preds]
+    l_start = m_cur.level_loss(preds, tgts, progress=0.0)
+    l_end = m_cur.level_loss(preds, tgts, progress=1.0)
+    l_unif = m_cur.level_loss(preds, tgts, progress=0.5)
+    # uniform at p=0.5 must equal the plain mean of per-level MSEs
+    l_plain = sum(F.mse_loss(preds[l], tgts[l]) for l in range(4)) / 4.0
+    assert torch.allclose(l_unif, l_plain, atol=1e-7)
+    # mirror check: p=1 weights are the p=0 weights reversed
+    mse_l = torch.tensor([F.mse_loss(preds[l], tgts[l]) for l in range(4)])
+    w0 = torch.tensor([64., 16., 4., 1.]); w0 = w0 / w0.sum()
+    w1 = torch.tensor([1., 4., 16., 64.]); w1 = w1 / w1.sum()
+    assert torch.allclose(l_start, (w0 * mse_l).sum(), atol=1e-6)
+    assert torch.allclose(l_end, (w1 * mse_l).sum(), atol=1e-6)
+    print(f"curriculum loss: start={l_start.item():.4f} mid={l_unif.item():.4f} "
+          f"(= plain mean) end={l_end.item():.4f} (mirror)")
 
     # 8. Ablation variants: GELU trunks (identical param count), no-c2f
     m_gelu = WIENDeepONet(activation="gelu")
