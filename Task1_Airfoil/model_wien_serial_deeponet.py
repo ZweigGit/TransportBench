@@ -57,7 +57,7 @@ class WIENSerialDeepONet(nn.Module):
     load_coeff_stats: same semantics as WIENDeepONet.
     """
 
-    def __init__(self, branch_dim=674, basis=32, trunk_widths=(41, 82, 165, 331),
+    def __init__(self, branch_dim=674, basis=32, trunk_widths=(103, 122, 190, 289),
                  trunk_layers=4, wavelet="db4", J=3, mode="symmetric",
                  grid_shapes=LEVEL_SHAPES_128, first_omega=30.0, hidden_omega=30.0,
                  activation="siren", use_c2f=True, learnable_omega=False,
@@ -90,10 +90,10 @@ class WIENSerialDeepONet(nn.Module):
 
         # per-level branch sub-networks: UNIFORM hidden width across levels
         # (branch_widths, default 64 x trunk_layers) so levels 1-3 each cost
-        # 81,420 branch params (L0 slightly less: o=4 output, 64,260); the
-        # trunk widths (41, 82, 165, 331) form an exact 2x ladder whose
-        # PARAMETER count follows the requested ~4x growth
-        # (10.7k / 52.9k / 148.4k / 462.1k). Total 982,567 (fixed omega).
+        # 81,420 branch params (L0 slightly less: o=4 output, 64,260); trunk
+        # widths (103, 122, 190, 289) give a near-exact 2x PARAMETER ladder
+        # (45.8k / 92.0k / 185.1k / 367.1k, ratios 2.04/1.99/1.98).
+        # Total 999,570 (fixed omega).
         if branch_widths is None:
             branch_widths = trunk_widths
         self.branch_nets = nn.ModuleList()
@@ -244,9 +244,9 @@ if __name__ == "__main__":
         print(f"level {l}: branch {bp:,} + trunk {tp:,} = {bp + tp:,}")
     total = sum(p.numel() for p in m.parameters())
     print(f"total: {total:,}")
-    assert per_level == [(64260, 10665), (81420, 52864), (81420, 148389),
-                         (81420, 462129)], per_level
-    assert total == 982567, total
+    assert per_level == [(64260, 45757), (81420, 93104), (81420, 185064),
+                         (81420, 367125)], per_level
+    assert total == 999570, total
 
     # 2. Forward / predict_field / query_field shapes
     dev = "cuda" if torch.cuda.is_available() else "cpu"

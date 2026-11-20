@@ -166,10 +166,10 @@ def main():
     elif args.model in ('wien_serial_deeponet', 'wien_serial_deeponet_noc2f'):
         # Per-scale (branch, trunk) pairs trained stage-by-stage coarse ->
         # fine; branch hidden 64x4 UNIFORM across levels, trunk widths
-        # (41, 82, 165, 331) = exact 2x ladder with ~4x parameter growth
-        # (10.7k/52.9k/148.4k/462.1k), 982,567 total, fixed SIREN omegas 30
+        # (103, 122, 190, 289) = ~2x PARAMETER ladder (45.8k/92.0k/185.1k/
+        # 367.1k, ratios 2.04/1.99/1.98), 999,570 total, fixed SIREN omegas 30
         model = WIENSerialDeepONet(
-            branch_dim=674, basis=32, trunk_widths=(41, 82, 165, 331),
+            branch_dim=674, basis=32, trunk_widths=(103, 122, 190, 289),
             branch_widths=(64, 64, 64, 64),
             trunk_layers=4, learnable_omega=False,
             use_c2f=(args.model == 'wien_serial_deeponet'))
